@@ -13,4 +13,4 @@ thread_class.o: thread_class.cpp
 	g++ -c -Wall -g thread_class.cpp
 
 clean:
-	rm *.o server
+	rm *.o server.exe

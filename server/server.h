@@ -1,22 +1,20 @@
-#include <arpa/inet.h>
+#include <arpa/inet.h> // for htons, ntohs...
 #include <cerrno> // for errno
-#include <climits>
 #include <cstring> // for memset
-#include <cstdio> // for fopen
+#include <cstdio> // for file access and error-handling functions
 #include <iostream>
+#include <limits>
 #include <mutex>
-#include <netinet/in.h>
+#include <netinet/in.h> // for struct sockaddr_in
 #include <string>
 #include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
 #include <thread>
 #include <unistd.h> // for close socket
+#include <unordered_map>
 
 using namespace std;
 
-struct client_data {
+struct connection_data {
 	int socket;
 	mutex mutex_socket_out;
 	mutex mutex_socket_in;
@@ -30,19 +28,32 @@ class Server {
 	int listener_socket = -1;
 	sockaddr_in server_address;
 
-	// unordered_map (utente, sock); --> hash_map
+	unordered_map<string, connection_data*> connected_client;
+	mutex connected_client_mutex;
+	// unordered_map (utente, connection_data*); --> hash_map
 	// mutex per hash map
 
 public:
-	// costruttore distruttore
 	// getSocketOutput
 	// releaseSocketOutput ???
 
-	Server(const unsigned short);
+	Server(const uint16_t port);
 	~Server();
 
+	/** Configure the listener socket, bind server IP address
+	 *	and start listening for client's requests.
+	 *
+	 *	@return false in case of failure
+	 */
 	bool configure_listener_socket();
-	int accept_client(sockaddr_in const*);
+
+	/** Accept client connection request from listener socker.
+	 *	Create a new socket for communication with the client.
+	 *
+	 *	@param client_addr IP address of client
+	 *	@return new socket's id, -1 if it failed
+	 */
+	int accept_client(sockaddr_in* client_addr) const;
 };
 
 
