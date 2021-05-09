@@ -14,10 +14,11 @@ Server::~Server()
 
 }
 
-/** Configure the listener socket, bind server IP address
- *	and start listening for client's requests.
- *
- *	@return false in case of failure
+/** 
+ * Configure the listener socket, bind server IP address
+ * and start listening for client's requests.
+ * 
+ * @return false in case of failure, true otherwise
  */
 bool Server::configure_listener_socket ()
 {
@@ -49,12 +50,14 @@ bool Server::configure_listener_socket ()
 	return true;
 }
 
-/** Accept client connection request from listener socker.
- *	Create a new socket for communication with the client.
- *
- *	@param client_addr IP address of client
- *	@return new socket's id, -1 if it failed
+/** 
+ * Accept client connection request from listener socker.
+ * Create a new socket for communication with the client.
+ * 
+ * @param client_addr IP address of client
+ * @return new socket's id, -1 if it failed
  */
+
 int Server::accept_client (sockaddr_in* client_addr) const
 {
     socklen_t addr_len = sizeof(client_addr);

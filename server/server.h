@@ -34,26 +34,28 @@ class Server {
 	// mutex per hash map
 
 public:
-	// getSocketOutput
-	// releaseSocketOutput ???
-
 	Server(const uint16_t port);
 	~Server();
 
-	/** Configure the listener socket, bind server IP address
-	 *	and start listening for client's requests.
-	 *
-	 *	@return false in case of failure
+	/**
+	 * Configure the listener socket, bind server IP address
+	 * and start listening for client's requests.
+	 * 
+	 * @return false in case of failure, true otherwise
 	 */
 	bool configure_listener_socket();
 
-	/** Accept client connection request from listener socker.
-	 *	Create a new socket for communication with the client.
+	/** 
+	 * Accept client connection request from listener socker.
+	 * Create a new socket for communication with the client.
 	 *
-	 *	@param client_addr IP address of client
-	 *	@return new socket's id, -1 if it failed
+	 * @param client_addr IP address of client
+	 * @return new socket's id, -1 if it failed
 	 */
 	int accept_client(sockaddr_in* client_addr) const;
+
+	// getSocketOutput
+	// releaseSocketOutput ???
 };
 
 
