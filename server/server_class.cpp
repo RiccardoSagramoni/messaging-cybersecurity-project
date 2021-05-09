@@ -57,7 +57,6 @@ bool Server::configure_listener_socket ()
  * @param client_addr IP address of client
  * @return new socket's id, -1 if it failed
  */
-
 int Server::accept_client (sockaddr_in* client_addr) const
 {
     socklen_t addr_len = sizeof(client_addr);
@@ -65,25 +64,3 @@ int Server::accept_client (sockaddr_in* client_addr) const
     // It could block the thread if there are no pending requests
     return accept(listener_socket, (sockaddr*)client_addr, &addr_len);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

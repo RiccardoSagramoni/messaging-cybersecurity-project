@@ -1,5 +1,18 @@
 #include "server.h"
 
+/**
+ * Launch the main function of a server thread
+ * so that it can handle client's connection request
+ * 
+ * @param server 
+ * @param socket 
+ * @param addr 
+ */
+void thread_main (Server* server, const int socket, const sockaddr_in addr) {
+	ServerThread st(server);
+	st.run(socket, addr);
+};
+
 // Start and configure the server
 // argv[1]: server port
 int main (int argc, char** argv)
@@ -30,13 +43,6 @@ int main (int argc, char** argv)
 	// Allocate structure for client IP address
 	sockaddr_in client_addr;
 	memset(&client_addr, 0, sizeof(client_addr));
-
-	// Lambda expression which launch the main function of a server thread
-	// so that it can handle client's connection request
-	auto thread_main = [](Server* server, const int socket, const sockaddr_in addr) {
-		ServerThread st;
-		st.run(server, socket, addr);
-	};
 
 	// The main thread stops waiting for a connection request from a client.
 	// Then, it accepts the request and create a new thread which will handle it
