@@ -9,8 +9,8 @@
  * @param addr 
  */
 void thread_main (Server* server, const int socket, const sockaddr_in addr) {
-	ServerThread st(server);
-	st.run(socket, addr);
+	ServerThread st(server, socket, addr);
+	st.run();
 };
 
 // Start and configure the server

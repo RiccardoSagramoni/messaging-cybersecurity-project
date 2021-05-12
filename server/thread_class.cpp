@@ -1,13 +1,36 @@
 #include "server.h"
 
-ServerThread::ServerThread(Server* serv)
+ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in addr)
 {
 	server = serv;
+	main_client_socket = socket;
+	main_client_address = addr;
 }
 
-void ServerThread::run(const int socket, const sockaddr_in addr)
+void ServerThread::run()
 {
-	// TODO
+	int ret;
+
+	// -) Authentication btw c/s
+	string username; // TODO
+
+	// -) Negotiate symmetric keys
+
+	// -) Ready to go
+
+	// -) Add current client to server
+	server->add_new_client(username, main_client_socket);
+
+	// -) Cycle
+		// -) Wait for command
+		// -) Execute command
+	while (true) {
+		unsigned char* msg = get_new_client_command();
+		ret = execute_client_command(msg);
+		free(msg);
+
+		// TODO Check ret
+	}
 }
 
 /**
@@ -47,11 +70,13 @@ int ServerThread::send_message (const int socket, void* msg, const uint16_t msg_
  * Wait for a message, expected on the specified socket
  * 
  * @param socket socket descriptor
- * @param msg pointer to the pointer that will contain the address 
- *            of the received message. On success, the message will 
- *            be allocated with a malloc call.
- * @return 1 on success, 0 if client closed the connection on the socket,
- *        -1 if any error occurred
+ * @param msg the address to a pointer. 
+ * After a successful function invocation, such a pointer will point 
+ * to an allocated buffer containing the received message.
+ *            
+ * @return 1 on success
+ * @return 0 if client closed the connection on the socket
+ * @return -1 if any error occurred
  */
 int ServerThread::receive_message (const int socket, void** msg)
 {
@@ -92,4 +117,25 @@ int ServerThread::receive_message (const int socket, void** msg)
 	}
 
 	return len;
+}
+
+int ServerThread::execute_client_command (unsigned char* msg) 
+{
+	uint8_t request_type = get_request_type(msg);
+	
+	switch (request_type) {
+		case TYPE_SHOW:
+			execute_show();
+			break;
+		case TYPE_TALK:
+			execute_talk();
+			break;
+		case TYPE_EXIT:
+			execute_exit();
+			break;
+		default: // Error
+			return -1;
+	}
+
+	return 1;
 }
