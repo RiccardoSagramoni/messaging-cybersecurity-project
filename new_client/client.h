@@ -16,53 +16,50 @@
 
 using namespace std;
 
-class Client
-{
-int sockfd = 0;
-char name[32];
-sockaddr_in server_addr;
-char *ip = "127.0.0.1";
-int port=0;
+class Client {
+    int sockfd = 0;
+    string name;
+    sockaddr_in server_addr;
+    string ip = "127.0.0.1";
+    const uint16_t port;
+
 public:
-    Client(int ports);
+    Client(const uint16_t ports);
     ~Client();
     bool configure_socket();
     bool connects();
     void exit();
     void str_overwrite_stdout();
-    void *send_msg_handler(void *dummyPt);
-    void *rcv_msg_handler(void *dummyPt);
+    void* send_msg_handler(void* dummyPt);
+    void* rcv_msg_handler(void* dummyPt);
     void str_trim_lf (char* arr, int length);
     //void thsend();
     //void thrcv();
 };
 
-Client::Client(int ports)
+Client::Client(const uint16_t ports) : port(ports)
 {
-    port=ports;
-    fgets(name, 32, stdin);
-    if (strlen(name) > 32 || strlen(name) < 2){
+    cin >> name;
+    if (name.length() > 32 || name.length() < 2) {
 		printf("Name must be less than 30 and more than 2 characters.\n");
 	}
-    str_trim_lf(name, strlen(name));
 }
 
 Client::~Client()
 {
 }
+
 bool Client::configure_socket() {
-    try
-    {
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        server_addr.sin_family = AF_INET;
-        server_addr.sin_addr.s_addr = inet_addr(ip);
-        server_addr.sin_port = htons(port);
-    }
-    catch(const std::exception& e)
-    {
-        std::cerr << e.what() << '\n';
+    sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd < 0) {
+        // TODO cerr 
         return false;
     }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(ip.c_str());
+    server_addr.sin_port = htons(port);
+
     return true;
 }
 bool Client::connects() {
@@ -73,7 +70,8 @@ bool Client::connects() {
 	}
     try
     {
-        send(sockfd, name, 32, 0);
+        ret = send(sockfd, name, 32, 0);
+        if (ret < quanti_byte) errore
     }
     catch(const std::exception& e)
     {
@@ -91,15 +89,17 @@ void Client::str_overwrite_stdout() {
     printf("%s", "> ");
     fflush(stdout);
 }
+
 void Client::str_trim_lf(char* arr, int length) {
     int i;
     for (i = 0; i < length; i++) {
-    if (arr[i] == '\n') {
-      arr[i] = '\0';
-      break;
+        if (arr[i] == '\n') {
+            arr[i] = '\0';
+            break;
+        }
     }
-  }
 }
+
 void *Client::send_msg_handler(void *dummyPt) {
     char message[LENGTH] = {};
     char buffer[LENGTH + 32] = {};
@@ -119,6 +119,7 @@ void *Client::send_msg_handler(void *dummyPt) {
         bzero(buffer, LENGTH + 32);
     }
 }
+
 void *Client::rcv_msg_handler(void *dummyPt) {
 
 }
@@ -162,7 +163,7 @@ void ClientThread::runSend() {
     if(pthread_create(&send_msg_thread, NULL, client::send_msg_handler, NULL) != 0){
 		printf("ERROR: pthread\n");
 	}*/
-    client->send_msg_handler;
+    client->send_msg_handler();
 }
 void ClientThread::runReceive() {
     /*pthread_t recv_msg_thread;
