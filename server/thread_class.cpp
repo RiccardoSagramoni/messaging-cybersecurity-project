@@ -3,7 +3,7 @@
 ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in addr)
 {
 	server = serv;
-	main_client_socket = socket;
+	client_socket = socket;
 	main_client_address = addr;
 }
 
@@ -12,6 +12,9 @@ void ServerThread::run()
 	int ret;
 
 	// -) Authentication btw c/s
+	ret = authenticate();
+	
+	
 	string username; // TODO
 
 	// -) Negotiate symmetric keys
@@ -19,7 +22,7 @@ void ServerThread::run()
 	// -) Ready to go
 
 	// -) Add current client to server
-	server->add_new_client(username, main_client_socket);
+	server->add_new_client(username, client_socket); // TODO handle failure
 
 	// -) Cycle
 		// -) Wait for command
@@ -74,9 +77,8 @@ int ServerThread::send_message (const int socket, void* msg, const uint16_t msg_
  * After a successful function invocation, such a pointer will point 
  * to an allocated buffer containing the received message.
  *            
- * @return 1 on success
- * @return 0 if client closed the connection on the socket
- * @return -1 if any error occurred
+ * @return length of message on success, 0 if client closed the connection on the socket, 
+ * -1 if any error occurred
  */
 int ServerThread::receive_message (const int socket, void** msg)
 {
@@ -119,16 +121,16 @@ int ServerThread::receive_message (const int socket, void** msg)
 	return len;
 }
 
-int ServerThread::execute_client_command (unsigned char* msg) 
+int ServerThread::execute_client_command (const unsigned char* msg) 
 {
 	uint8_t request_type = get_request_type(msg);
 	
 	switch (request_type) {
 		case TYPE_SHOW:
-			execute_show();
+			execute_show(msg);
 			break;
 		case TYPE_TALK:
-			execute_talk();
+			execute_talk(msg);
 			break;
 		case TYPE_EXIT:
 			execute_exit();
@@ -138,4 +140,74 @@ int ServerThread::execute_client_command (unsigned char* msg)
 	}
 
 	return 1;
+}
+
+uint8_t ServerThread::get_request_type (const unsigned char* msg)
+{
+	return (uint8_t)msg[0];
+}
+
+int ServerThread::execute_exit()
+{
+	// TODO
+}
+
+
+int ServerThread::authenticate (string& username)
+{
+	int ret;
+
+// -) Server wait for client's nonce and name
+	receive_client_nonce(username, msg); //  TODO
+// -) Server sends certificate and encrypted nonce
+	// Encrypt nonce
+	ret = encrypt_data_pubkey();
+	// Prepare message
+
+	// Send message 
+
+	// -) Server sends server's nonce
+
+	// -) Server waits for encrypted server nonce
+
+	// -) Server check validity
+}
+
+int ServerThread::receive_client_nonce(string& username, unsigned char** msg)
+{
+	unsigned char* client_data_msg = nullptr;
+	int ret = receive_message(client_socket, (void**)&client_data_msg);
+	if (ret <= NONCE_LENGHT) {
+		return -1; // TODO error
+	}
+
+	size_t client_data_msg_len = ret;
+
+	// Estrai username
+	size_t username_len = client_data_msg_len - NONCE_LENGHT;
+	char* username_c = new char[username_len + 1];
+	memcpy(username_c, client_data_msg + NONCE_LENGHT, username_len);
+	username_c[username_len] = '\0';
+	username.assign(username_c);
+	delete[] username_c;
+}
+
+int ServerThread::encrypt_data_pubkey()
+{
+	// declare some useful variables:
+	const EVP_CIPHER* cipher = EVP_aes_128_cbc();
+	int block_size = EVP_CIPHER_block_size(cipher);
+
+	EVP_PKEY* privkey = server->get_privkey();
+
+	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+	if (!ctx) {
+		cerr << "EVP_CIPHER_CTX_new() returned NULL\n";
+		return -1; // TODO failure
+	}
+
+	int ret = EVP_SealInit(ctx, );
+
+	EVP_PKEY_free(privkey);
+	// close ctx
 }

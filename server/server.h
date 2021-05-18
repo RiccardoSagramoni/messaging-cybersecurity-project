@@ -7,6 +7,10 @@
 #include <list>
 #include <mutex>
 #include <netinet/in.h> // for struct sockaddr_in
+#include <openssl/dh.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <shared_mutex>
 #include <string>
 #include <sys/socket.h>
@@ -39,10 +43,14 @@ class Server {
 	int listener_socket = -1;
 	sockaddr_in server_address;
 
+	// Hashed map which stores client's data, necessary for connection
+	// Key: client's username
+	// Value: data of client (socket, available state...)
 	unordered_map<string, connection_data*> connected_client;
+	// Shared mutex for accessing the hashed map
 	shared_timed_mutex connected_client_mutex;
-	// unordered_map (utente, connection_data*); --> hash_map
-	// mutex per hash map
+
+	static DH* get_dh2048();
 
 public:
 	Server(const uint16_t port);
@@ -52,16 +60,19 @@ public:
 	 * Configure the listener socket, bind server IP address
 	 * and start listening for client's requests.
 	 * 
-	 * @return false in case of failure, true otherwise
+	 * @return true on success
+ 	 * @return false on failure
 	 */
 	bool configure_listener_socket();
 
 	/** 
 	 * Accept client connection request from listener socker.
 	 * Create a new socket for communication with the client.
-	 *
+	 * 
 	 * @param client_addr IP address of client
-	 * @return new socket's id, -1 if it failed
+	 * 
+	 * @return id of new socket on success
+	 * @return -1 on failure
 	 */
 	int accept_client (sockaddr_in* client_addr) const;
 
@@ -88,7 +99,16 @@ public:
 	 */
 	bool handle_socket_lock (const string username, const bool lock, const bool input);
 
+	int close_client (const string username);
+
+	/**
+	 * Return a list of client logged to the server and available to talk
+	 * 
+	 * @return list of available client's usernames
+	 */
 	list<string> get_available_clients_list ();
+
+	EVP_PKEY* get_privkey ();
 };
 
 
@@ -96,9 +116,10 @@ public:
 class ServerThread {
 	Server* server;
 	
-	int main_client_socket;
+	int client_socket;
 	sockaddr_in main_client_address;
 
+	string username;
 
 
 	/**
@@ -127,17 +148,34 @@ class ServerThread {
 
 	unsigned char* get_new_client_command ();
 
-	int execute_client_command (unsigned char* msg);
+	int execute_client_command (const unsigned char* msg);
 
-	int execute_show();
-	int execute_talk();
-	int execute_exit();
+	int execute_show (const unsigned char*);
+	int execute_talk (const unsigned char*);
+	int execute_exit ();
 
-	uint8_t get_request_type (unsigned char* msg);
+	uint8_t get_request_type (const unsigned char* msg);
+
+
+	//
+	int authenticate (string& username);
+	int receive_client_nonce(string& username, unsigned char** msg);
+
+	int encrypt_data_pubkey ();
 
 public:
+	/**
+	 * Constructor
+	 * 
+	 * @param _server pointer to server object
+	 * @param socket descriptor of the socket created for the client's connection request
+	 * @param addr IP address of connected client
+	 */
 	ServerThread(Server* _server, const int socket, const sockaddr_in addr);
-	//--> ricevi comando, esegui
+	
+	/**
+	 * Start the thread
+	 */
 	void run();
 };
 
@@ -152,3 +190,5 @@ public:
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
 // }
+
+#define		NONCE_LENGHT	256

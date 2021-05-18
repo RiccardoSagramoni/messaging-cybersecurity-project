@@ -8,7 +8,8 @@
  * @param socket 
  * @param addr 
  */
-void thread_main (Server* server, const int socket, const sockaddr_in addr) {
+void new_thread (Server* server, const int socket, const sockaddr_in addr) 
+{
 	ServerThread st(server, socket, addr);
 	st.run();
 };
@@ -54,6 +55,6 @@ int main (int argc, char** argv)
 			continue;
         }
 
-        thread t(thread_main, &server, new_socket, client_addr);
+        thread t(new_thread, &server, new_socket, client_addr);
 	}
 }
