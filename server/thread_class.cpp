@@ -337,20 +337,32 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 	return dh_key;
 }
 
+/**
+ * 
+ * 
+ * @param my_dh_key 
+ * @param peer_key 
+ * @param key_len 
+ * @return  
+ */
 unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key, 
                                                  EVP_PKEY* peer_key, 
                                                  size_t key_len)
 {
 	int ret;
 
+	// Create a new context for deriving DH key
 	EVP_PKEY_CTX* key_ctx = EVP_PKEY_CTX_new(my_dh_key, nullptr);
 	if (!key_ctx) {
+		cerr << "Thread " << this_thread::get_id() << " failed [derive_session_key]:\n";
+		ERR_print_errors_fp(stderr);
 		return nullptr;
 	}
 
 	unsigned char* secret = nullptr;
 	size_t secret_len = 0;
 
+	// Derive the shared secret between client and server
 	try {
 		ret = EVP_PKEY_derive_init(key_ctx);
 		if (ret != 1) throw 0;
@@ -369,14 +381,8 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 			cerr << "Thread " << this_thread::get_id() << " [derive_session_key]: allocation of shared secret failed" << endl;
 		}
 		else {
-			auto error_code = ERR_get_error();
-			if (error_code != 0) {
-				cerr << "Thread " << this_thread::get_id() << " [derive_session_key]: "
-				     << ERR_error_string(error_code, nullptr) << endl;
-			}
-			else {
-				cerr << "Thread " << this_thread::get_id() << " [derive_session_key]: failed" << endl;
-			}
+			cerr << "Thread " << this_thread::get_id() << " failed [derive_session_key]:\n";
+			ERR_print_errors_fp(stderr);
 		}
 
 		EVP_PKEY_CTX_free(key_ctx);
@@ -451,14 +457,8 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 		#pragma optimize("", on)
 		free(secret);
 
-		auto error_code = ERR_get_error();
-		if (error_code != 0) {
-			cerr << "Thread " << this_thread::get_id() << " [derive_session_key]: "
-					<< ERR_error_string(error_code, nullptr) << endl;
-		}
-		else {
-			cerr << "Thread " << this_thread::get_id() << " [derive_session_key]: failed" << endl;
-		}
+		cerr << "Thread " << this_thread::get_id() << " failed [derive_session_key]:\n";
+		ERR_print_errors_fp(stderr);
 
 		return nullptr;
 	}
