@@ -8,6 +8,7 @@
 #include <mutex>
 #include <netinet/in.h> // for struct sockaddr_in
 #include <openssl/dh.h>
+#include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
@@ -50,7 +51,7 @@ class Server {
 	// Shared mutex for accessing the hashed map
 	shared_timed_mutex connected_client_mutex;
 
-	static DH* get_dh2048();
+	
 
 public:
 	Server(const uint16_t port);
@@ -99,6 +100,12 @@ public:
 	 */
 	bool handle_socket_lock (const string username, const bool lock, const bool input);
 
+	/**
+	 * // TODO
+	 * 
+	 * @param username 
+	 * @return int 
+	 */
 	int close_client (const string username);
 
 	/**
@@ -108,6 +115,11 @@ public:
 	 */
 	list<string> get_available_clients_list ();
 
+	/**
+	 * // TODO
+	 * 
+	 * @return EVP_PKEY* 
+	 */
 	EVP_PKEY* get_privkey ();
 };
 
@@ -121,6 +133,12 @@ class ServerThread {
 
 	string username;
 
+	/**
+	 * // TODO
+	 * 
+	 * @return DH* 
+	 */
+	static DH* get_dh2048();
 
 	/**
 	 * Send a message though the specified socket
@@ -158,10 +176,15 @@ class ServerThread {
 
 
 	//
-	int authenticate (string& username);
-	int receive_client_nonce(string& username, unsigned char** msg);
-
-	int encrypt_data_pubkey ();
+	int authenticate_and_negotiate_keys (string& username);
+	static EVP_PKEY* generate_key_dh ();
+	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
+	static const EVP_CIPHER* get_symmetric_cipher ();
+	//
+//
+//	int receive_client_nonce(string& username, unsigned char** msg);
+//
+//	int encrypt_data_pubkey ();
 
 public:
 	/**
