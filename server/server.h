@@ -7,6 +7,7 @@
 #include <list>
 #include <mutex>
 #include <netinet/in.h> // for struct sockaddr_in
+#include <openssl/bio.h>
 #include <openssl/dh.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -117,6 +118,13 @@ public:
 
 	/**
 	 * // TODO
+	 * @return true 
+	 * @return false 
+	 */
+	bool is_client_online (const string& username);
+
+	/**
+	 * // TODO
 	 * 
 	 * @return EVP_PKEY* 
 	 */
@@ -148,21 +156,20 @@ class ServerThread {
 	 * @param msg_len length of the message 
 	 * @return 1 on success, -1 otherwise 
 	 */
-	int send_message (const int socket, void* msg, const uint16_t msg_len);
+	int send_message (const int socket, void* msg, const uint32_t msg_len);
 
 	/**
 	 * Wait for a message, expected on the specified socket
 	 * 
 	 * @param socket socket descriptor
-	 * @param msg the address to a pointer. 
+	 * @param msg the address of a pointer. 
 	 * After a successful function invocation, such a pointer will point 
 	 * to an allocated buffer containing the received message.
 	 *            
-	 * @return 1 on success
-	 * @return 0 if client closed the connection on the socket
-	 * @return -1 if any error occurred
+	 * @return length of message on success, 0 if client closed the connection on the socket, 
+	 * -1 if any error occurred
 	 */
-	int receive_message (const int socket, void** msg);
+	long receive_message (const int socket, void** msg);
 
 	unsigned char* get_new_client_command ();
 
@@ -176,10 +183,12 @@ class ServerThread {
 
 
 	//
-	int authenticate_and_negotiate_keys (string& username);
+	bool authenticate_and_negotiate_keys (string& username);
 	static EVP_PKEY* generate_key_dh ();
 	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
 	static const EVP_CIPHER* get_symmetric_cipher ();
+	int receive_hello_message (EVP_PKEY*& peer_key, string& username);
+	bool check_username_validity(const string& username);
 	//
 //
 //	int receive_client_nonce(string& username, unsigned char** msg);

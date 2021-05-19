@@ -159,6 +159,13 @@ list<string> Server::get_available_clients_list ()
 	return l;
 }
 
+bool Server::is_client_online (const string& username)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	return (connected_client.count(username) != 0);
+}
 
 int Server::close_client (const string username)
 {

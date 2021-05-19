@@ -62,11 +62,12 @@ void ServerThread::run()
 {
 	int ret;
 
-	// -) Authentication btw c/s
-	string username; // TODO
-	ret = authenticate_and_negotiate_keys(username);	
-
-	// -) Negotiate symmetric keys
+	// -) Authentication btw c/s and negotiate session key
+	string username;
+	if(!authenticate_and_negotiate_keys(username)) {
+		// TODO
+		return;
+	}	
 
 	// -) Ready to go
 
@@ -93,13 +94,13 @@ void ServerThread::run()
  * @param msg_len length of the message 
  * @return 1 on success, -1 otherwise 
  */
-int ServerThread::send_message (const int socket, void* msg, const uint16_t msg_len)
+int ServerThread::send_message (const int socket, void* msg, const uint32_t msg_len)
 {
 	ssize_t ret;
 	
 	// Convert message length to network format,
 	// in order to obtain architecture indipendence
-	uint16_t len = htons(msg_len);	
+	uint32_t len = htonl(msg_len);	
 	
 	// Send message's length
 	ret = send(socket, &len, sizeof(len), 0);
@@ -122,17 +123,17 @@ int ServerThread::send_message (const int socket, void* msg, const uint16_t msg_
  * Wait for a message, expected on the specified socket
  * 
  * @param socket socket descriptor
- * @param msg the address to a pointer. 
+ * @param msg the address of a pointer. 
  * After a successful function invocation, such a pointer will point 
  * to an allocated buffer containing the received message.
  *            
  * @return length of message on success, 0 if client closed the connection on the socket, 
  * -1 if any error occurred
  */
-int ServerThread::receive_message (const int socket, void** msg)
+long ServerThread::receive_message (const int socket, void** msg)
 {
 	ssize_t ret;
-	uint16_t len;
+	uint32_t len;
 	
 	// Receive length of message
 	ret = recv(socket, &len, sizeof(len), 0);
@@ -145,10 +146,10 @@ int ServerThread::receive_message (const int socket, void** msg)
 	}
 	
 	// Convert received length to host format
-	len = ntohs(len);
+	len = ntohl(len);
 
 	*msg = malloc(len);
-	if (!msg) {
+	if (!(*msg)) {
 		cerr << "Malloc failed (message too long?)\n";
 		return -1;
 	}
@@ -159,7 +160,7 @@ int ServerThread::receive_message (const int socket, void** msg)
 		return 0;
 	}
 	if (ret < 0 || ret < len) { // Received data too short
-		perror("Receive per il messaggio fallito");
+		perror("Receive message failed");
 		
 		free(*msg);
 		*msg = nullptr;
@@ -201,83 +202,32 @@ int ServerThread::execute_exit()
 	// TODO
 }
 
-/*
-int ServerThread::authenticate (string& username)
-{
-	int ret;
-
-// -) Server wait for client's nonce and name
-	receive_client_nonce(username, msg); //  TODO
-// -) Server sends certificate and encrypted nonce
-	// Encrypt nonce
-	ret = encrypt_data_pubkey();
-	// Prepare message
-
-	// Send message 
-
-	// -) Server sends server's nonce
-
-	// -) Server waits for encrypted server nonce
-
-	// -) Server check validity
-}
-
-int ServerThread::receive_client_nonce(string& username, unsigned char** msg)
-{
-	unsigned char* client_data_msg = nullptr;
-	int ret = receive_message(client_socket, (void**)&client_data_msg);
-	if (ret <= NONCE_LENGHT) {
-		return -1; // TODO error
-	}
-
-	size_t client_data_msg_len = ret;
-
-	// Estrai username
-	size_t username_len = client_data_msg_len - NONCE_LENGHT;
-	char* username_c = new char[username_len + 1];
-	memcpy(username_c, client_data_msg + NONCE_LENGHT, username_len);
-	username_c[username_len] = '\0';
-	username.assign(username_c);
-	delete[] username_c;
-}
-
-int ServerThread::encrypt_data_pubkey()
-{
-	// declare some useful variables:
-	const EVP_CIPHER* cipher = EVP_aes_128_cbc();
-	int block_size = EVP_CIPHER_block_size(cipher);
-
-	EVP_PKEY* privkey = server->get_privkey();
-
-	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-	if (!ctx) {
-		cerr << "EVP_CIPHER_CTX_new() returned NULL\n";
-		return -1; // TODO failure
-	}
-
-	int ret = EVP_SealInit(ctx, );
-
-	EVP_PKEY_free(privkey);
-	// close ctx
-}
-
-*/
-
-int ServerThread::authenticate_and_negotiate_keys (string& username)
+bool ServerThread::authenticate_and_negotiate_keys (string& username)
 {
 	int ret;
 // 1) Receive clients username and g**a
-//	username || g**a
-	EVP_PKEY* peer_key; // TODO
+	EVP_PKEY* peer_key = nullptr;
+	ret = receive_hello_message(peer_key, username);
+	if (ret < 0) return false;
+
+	// Check if username is valid
+	if(!check_username_validity(username)) {
+		cerr << "Thread " << this_thread::get_id() 
+		     << " authenticate_and_negotiate_keys failed: username doesn't exist" 
+		     << endl;
+		return false;
+	}
 
 // 2) Generate random b and calculate g**b (Diffie-Helmann)
 	EVP_PKEY* my_dh_key = generate_key_dh();
+	if (my_dh_key) return false;
 
 // 3) Derive shared secret k and hash it
 	size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
 	unsigned char* session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
+	if (!sessione_key) return false;
 
-// 4) Send g**b || encrypted_k{sign of g**b,g**a} || certificate
+// 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
 
 // 5) Recevive encrypted_k{encrypted_client{g**a,g**b}}
 
@@ -293,42 +243,40 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 {
 	int ret;
 	
-	// Get DH params p and g
-	EVP_PKEY* dh_params = EVP_PKEY_new();
-	if (!dh_params) {
-		// TODO print error?
-		return nullptr;
-	}
-	DH* temp_dh_params = get_dh2048();
-	ret  = EVP_PKEY_set1_DH(dh_params, temp_dh_params);
-	free(temp_dh_params);
-	if (ret != 1) {
-		// TODO print error?
-		return nullptr;
-	}
-
-	// Generate g**b
-	EVP_PKEY_CTX* dh_gen_ctx = EVP_PKEY_CTX_new(dh_params, nullptr);
-	if (!dh_gen_ctx) {
-		// TODO print error?
-		free(dh_params);
-		return nullptr;
-	}
-
-	ret = EVP_PKEY_keygen_init(dh_gen_ctx);
-	if (ret != 1) {
-		// TODO print error?
-		free(dh_params);
-		EVP_PKEY_CTX_free(dh_gen_ctx);
-		return nullptr;
-	}
-
+	EVP_PKEY* dh_params = nullptr;
+	EVP_PKEY_CTX* dh_gen_ctx = nullptr;
 	EVP_PKEY* dh_key = nullptr;
-	ret = EVP_PKEY_keygen(dh_gen_ctx, &dh_key);
-	if (ret != 1) {
-		// TODO print error?
-		free(dh_params);
-		EVP_PKEY_CTX_free(dh_gen_ctx);
+
+	try {
+		// Allocate DH params p and g
+		dh_params = EVP_PKEY_new();
+		if (!dh_params) throw 0;
+
+		// Calculate DH params
+		DH* temp_dh_params = get_dh2048();
+		ret  = EVP_PKEY_set1_DH(dh_params, temp_dh_params);
+		free(temp_dh_params);
+		if (ret != 1) throw 1;
+
+		// Generate g**b
+		dh_gen_ctx = EVP_PKEY_CTX_new(dh_params, nullptr);
+		if (!dh_gen_ctx) throw 1;
+
+		ret = EVP_PKEY_keygen_init(dh_gen_ctx);
+		if (ret != 1) throw 2;
+
+		dh_key = nullptr;
+		ret = EVP_PKEY_keygen(dh_gen_ctx, &dh_key);
+		if (ret != 1) throw 2;
+
+	} catch (int e) {
+		if (e >= 2) {
+			EVP_PKEY_CTX_free(dh_gen_ctx);
+		}
+		if (e >= 1) {
+			free(dh_params);
+		}
+
 		return nullptr;
 	}
 
@@ -338,7 +286,7 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 }
 
 /**
- * 
+ * // TODO
  * 
  * @param my_dh_key 
  * @param peer_key 
@@ -475,7 +423,66 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 	return key;
 }
 
+/**
+ * Get symmetric cipher used in this application.
+ * 
+ * @return structure which describes chosen cipher
+ */
 const EVP_CIPHER* ServerThread::get_symmetric_cipher ()
 {
 	return EVP_aes_128_cbc();
+}
+
+int ServerThread::receive_hello_message (EVP_PKEY*& peer_key, string& username)
+{
+	long ret_long;
+
+	/* The first messages that the client has to send are:
+		1) His username
+		2) The value g**a neded for the Diffie-Hellmann protocol
+		Those are sent in cleartext
+	*/
+	// Get the username
+	char* username_c = nullptr;
+	ret_long = receive_message(client_socket, (void**)&username_c);
+	if (ret_long <= 0) {
+		return -1;
+	}
+	size_t username_len = ret_long;
+	username = username_c;
+	free(username_c);
+
+	// Get client's "key" g**a
+	unsigned char* key = nullptr;
+	ret_long = receive_message(client_socket, (void**)&key);
+	if (ret_long <= 0) {
+		return -1;
+	}
+	size_t key_len = ret_long;
+
+	BIO* mem_bio = BIO_new(BIO_s_mem());
+	BIO_write(mem_bio, key, key_len);
+	free(key);
+
+	peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
+	BIO_free(mem_bio);
+
+	return 1;
+}
+
+/**
+ * Check if specified username is valid, i.e. if it exists AND it's not already logged
+ * 
+ * @param username name of the user
+ * @return 1 if the username is valid, 0 if
+ */
+bool ServerThread::check_username_validity (const string& username)
+{
+	// Check is username exists
+	/* try to open file to read */
+	string file_name = "clients/" + username + ".pem";
+	FILE* file = fopen(file_name.c_str(), "r");
+	fclose(file);
+
+	return (file != nullptr);
 }
