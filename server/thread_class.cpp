@@ -225,9 +225,11 @@ bool ServerThread::authenticate_and_negotiate_keys (string& username)
 // 3) Derive shared secret k and hash it
 	size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
 	unsigned char* session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
-	if (!sessione_key) return false;
+	if (!session_key) return false;
 
 // 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
+	
+
 
 // 5) Recevive encrypted_k{encrypted_client{g**a,g**b}}
 
@@ -435,6 +437,7 @@ const EVP_CIPHER* ServerThread::get_symmetric_cipher ()
 
 int ServerThread::receive_hello_message (EVP_PKEY*& peer_key, string& username)
 {
+	int ret_int;
 	long ret_long;
 
 	/* The first messages that the client has to send are:
@@ -460,29 +463,50 @@ int ServerThread::receive_hello_message (EVP_PKEY*& peer_key, string& username)
 	}
 	size_t key_len = ret_long;
 
-	BIO* mem_bio = BIO_new(BIO_s_mem());
-	BIO_write(mem_bio, key, key_len);
-	free(key);
+	BIO* mem_bio = nullptr;
+	try {
+		mem_bio = BIO_new(BIO_s_mem());
+		if (!mem_bio) throw 0;
 
-	peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
+		ret_int = BIO_write(mem_bio, key, key_len);
+		if (ret_int <= 0) throw 1;
+
+		peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
+		if (!peer_key) throw 1;
+		
+	} catch (int e) {
+		if (e >= 1) {
+			BIO_free(mem_bio);
+		}
+		free(key);
+		return -1;
+	}
+
+	free(key);
 	BIO_free(mem_bio);
 
 	return 1;
 }
 
 /**
- * Check if specified username is valid, i.e. if it exists AND it's not already logged
+ * Check if specified username is valid, 
+ * i.e. if its public key is installed on the server
  * 
  * @param username name of the user
  * @return 1 if the username is valid, 0 if
  */
 bool ServerThread::check_username_validity (const string& username)
 {
-	// Check is username exists
-	/* try to open file to read */
+	// Check is username exists by checking if 
+	// the relative public key is installed on the server
 	string file_name = "clients/" + username + ".pem";
 	FILE* file = fopen(file_name.c_str(), "r");
-	fclose(file);
-
-	return (file != nullptr);
+	
+	if (file) {
+		fclose(file);
+		return true;
+	}
+	else {
+		return false;
+	}
 }
