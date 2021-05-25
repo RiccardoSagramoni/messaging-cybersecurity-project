@@ -13,6 +13,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rand.h>
+#include <openssl/x509.h>
 #include <shared_mutex>
 #include <string>
 #include <sys/socket.h>
@@ -41,6 +42,8 @@ struct connection_data {
 
 class Server {
 	static const int BACKLOG_LEN = 10;
+	const string filename_prvkey = "privkey.pem";
+	const string filename_certificate = "certificate.pem";
 
 	int listener_socket = -1;
 	sockaddr_in server_address;
@@ -52,6 +55,12 @@ class Server {
 	// Shared mutex for accessing the hashed map
 	shared_timed_mutex connected_client_mutex;
 
+	/**
+	 * // TODO
+	 * 
+	 * @return EVP_PKEY* 
+	 */
+	EVP_PKEY* get_private_key ();
 	
 
 public:
@@ -123,12 +132,8 @@ public:
 	 */
 	bool is_client_online (const string& username);
 
-	/**
-	 * // TODO
-	 * 
-	 * @return EVP_PKEY* 
-	 */
-	EVP_PKEY* get_privkey ();
+	
+	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 };
 
 
@@ -189,6 +194,9 @@ class ServerThread {
 	static const EVP_CIPHER* get_symmetric_cipher ();
 	int receive_hello_message (EVP_PKEY*& peer_key, string& username);
 	bool check_username_validity(const string& username);
+	int send_session_key_STS (unsigned char* shared_key, size_t shared_key_len, EVP_PKEY* my_dh_key, EVP_PKEY* peer_key);
+	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, unsigned char* key, size_t key_len, size_t& ciphertext_len);
+	X509* get_server_certificate();
 	//
 //
 //	int receive_client_nonce(string& username, unsigned char** msg);

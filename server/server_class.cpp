@@ -197,3 +197,84 @@ int Server::close_client (const string username)
 
 	return 1;
 }
+
+/**
+ * // TODO
+ * 
+ * @return EVP_PKEY* 
+ */
+EVP_PKEY* Server::get_private_key ()
+{
+
+	// Load my private key:
+	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
+	if (!prvkey_file) {
+		cerr << "[Thread " << this_thread::get_id() << "] Error: "
+		<< "Cannot open " << filename_prvkey << endl;
+		return nullptr;
+	}
+
+	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, NULL);
+	fclose(prvkey_file);
+	if(!prvkey) { 
+		cerr << "[Thread " << this_thread::get_id() << "] Error: "
+		<< "PEM_read_PrivateKey returned NULL" << endl; 
+		return nullptr;
+	}
+
+	return prvkey;
+}
+
+/**
+ * // TODO
+ * 
+ * @param msg 
+ * @param msg_len 
+ * @param signature_len 
+ * @return unsigned* 
+ */
+unsigned char* Server::sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len)
+{
+	int ret;
+	EVP_PKEY* prvkey = nullptr;
+	EVP_MD_CTX* ctx = nullptr;
+	unsigned char* signature = nullptr;
+	
+	try {
+		prvkey = get_private_key();
+		if (!prvkey) throw 0;
+		
+		ctx= EVP_MD_CTX_new();
+		if (!ctx) throw 1;
+
+		ret = EVP_SignInit(ctx, EVP_sha256());
+		if (ret != 1) throw 2;
+
+		ret = EVP_SignUpdate(ctx, msg, msg_len);
+		if (ret != 1) throw 2;
+
+		signature_len = EVP_PKEY_size(prvkey);
+		signature = (unsigned char*)malloc(signature_len);
+		if (!signature) throw 2;
+
+		ret = EVP_SignFinal(ctx, signature, &signature_len, prvkey);
+		if (ret != 1) throw 3;
+
+	} catch (int e) {
+		if (e >= 3) {
+			free(signature);
+		}
+		if (e >= 2) {
+			EVP_MD_CTX_free(ctx);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(prvkey);
+		}
+		return nullptr;
+	}
+	
+	EVP_MD_CTX_free(ctx);
+	EVP_PKEY_free(prvkey);
+
+	return signature;
+}
