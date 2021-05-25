@@ -1,5 +1,12 @@
 #include "server.h"
 
+/**
+ * Constructor
+ * 
+ * @param _server pointer to server object
+ * @param socket descriptor of the socket created for the client's connection request
+ * @param addr IP address of connected client
+ */
 ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in addr)
 {
 	server = serv;
@@ -7,6 +14,11 @@ ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in add
 	main_client_address = addr;
 }
 
+/**
+ * Generate public DH parameters for this application
+ * 
+ * @return DH parameters
+ */
 DH* ServerThread::get_dh2048 ()
 {
     static unsigned char dhp_2048[] = {
@@ -57,15 +69,101 @@ DH* ServerThread::get_dh2048 ()
     return dh;
 }
 
+/**
+ * Get server's private key from file
+ * 
+ * @return server's private key
+ */
+EVP_PKEY* ServerThread::get_private_key ()
+{
+	// Load my private key:
+	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
+	if (!prvkey_file) {
+		cerr << "[Thread " << this_thread::get_id() << "] Error: "
+		<< "Cannot open " << filename_prvkey << endl;
+		return nullptr;
+	}
 
+	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, NULL);
+	fclose(prvkey_file);
+	if(!prvkey) { 
+		cerr << "[Thread " << this_thread::get_id() << "] Error: "
+		<< "PEM_read_PrivateKey returned NULL" << endl; 
+		return nullptr;
+	}
+
+	return prvkey;
+}
+
+/**
+ * Sign a message with server's private key
+ * 
+ * @param msg message to sign
+ * @param msg_len length of message
+ * @param signature_len return length of generated signature
+ * 
+ * @return generated signature of given message
+ */
+unsigned char* ServerThread::sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len)
+{
+	int ret;
+	EVP_PKEY* prvkey = nullptr;
+	EVP_MD_CTX* ctx = nullptr;
+	unsigned char* signature = nullptr;
+	
+	try {
+		prvkey = get_private_key();
+		if (!prvkey) throw 0;
+		
+		ctx= EVP_MD_CTX_new();
+		if (!ctx) throw 1;
+
+		ret = EVP_SignInit(ctx, EVP_sha256());
+		if (ret != 1) throw 2;
+
+		ret = EVP_SignUpdate(ctx, msg, msg_len);
+		if (ret != 1) throw 2;
+
+		signature_len = EVP_PKEY_size(prvkey);
+		signature = (unsigned char*)malloc(signature_len);
+		if (!signature) throw 2;
+
+		ret = EVP_SignFinal(ctx, signature, &signature_len, prvkey);
+		if (ret != 1) throw 3;
+
+	} catch (int e) {
+		if (e >= 3) {
+			free(signature);
+		}
+		if (e >= 2) {
+			EVP_MD_CTX_free(ctx);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(prvkey);
+		}
+		return nullptr;
+	}
+	
+	EVP_MD_CTX_free(ctx);
+	EVP_PKEY_free(prvkey);
+
+	return signature;
+}
+
+/**
+ * Start the thread
+ */
 void ServerThread::run()
 {
 	int ret;
 
 	// -) Authentication btw c/s and negotiate session key
 	string username;
-	if(!authenticate_and_negotiate_keys(username)) {
+	size_t key_len = 0;
+	unsigned char* key = authenticate_and_negotiate_key(username, key_len);
+	if(!key) {
 		// TODO
+		close(client_socket);
 		return;
 	}	
 
@@ -87,7 +185,7 @@ void ServerThread::run()
 }
 
 /**
- * Send a message though the specified socket
+ * Send a message through the specified socket
  * 
  * @param socket socket descriptor
  * @param msg pointer to the message
@@ -171,6 +269,12 @@ long ServerThread::receive_message (const int socket, void** msg)
 	return len;
 }
 
+/**
+ * Parse received message from client and execute its request
+ * 
+ * @param msg received message
+ * @return 1 on success, -1 on failure
+ */
 int ServerThread::execute_client_command (const unsigned char* msg) 
 {
 	uint8_t request_type = get_request_type(msg);
@@ -192,43 +296,54 @@ int ServerThread::execute_client_command (const unsigned char* msg)
 	return 1;
 }
 
+/**
+ * Given a message, extract the type of client's message
+ * 
+ * @param msg received message
+ * @return type of request
+ */
 uint8_t ServerThread::get_request_type (const unsigned char* msg)
 {
 	return (uint8_t)msg[0];
 }
 
-int ServerThread::execute_exit()
-{
-	// TODO
-}
 
-bool ServerThread::authenticate_and_negotiate_keys (string& username)
+/**
+ * Try to authenticate the client and negotiate a symmetric shared secret key,
+ * using the Station-to-Station protocol (a modified version of Diffie-Hellman)
+ * 
+ * @param username identifier of the client
+ * @param key_len reference to the variable that will contain the length of the key on success
+ * 
+ * @return the negotiated key on success, NULL on failure
+ */
+unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, size_t& key_len)
 {
 	int ret;
 // 1) Receive clients username and g**a
 	EVP_PKEY* peer_key = nullptr;
 	ret = receive_hello_message(peer_key, username);
-	if (ret < 0) return false;
+	if (ret < 0) return nullptr;
 
 	// Check if username is valid
 	if(!check_username_validity(username)) {
 		cerr << "Thread " << this_thread::get_id() 
-		     << " authenticate_and_negotiate_keys failed: username doesn't exist" 
+		     << " authenticate_and_negotiate_key failed: username doesn't exist" 
 		     << endl;
-		return false;
+		return nullptr;
 	}
 
 // 2) Generate random b and calculate g**b (Diffie-Helmann)
 	EVP_PKEY* my_dh_key = generate_key_dh();
-	if (my_dh_key) return false;
+	if (my_dh_key) return nullptr;
 
 // 3) Derive shared secret k and hash it
 	size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
 	unsigned char* session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
-	if (!session_key) return false;
+	if (!session_key) return nullptr;
 
 // 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
-	
+	// TODO HERE!
 
 
 // 5) Recevive encrypted_k{encrypted_client{g**a,g**b}}
@@ -237,9 +352,9 @@ bool ServerThread::authenticate_and_negotiate_keys (string& username)
 }
 
 /**
- * // TODO
+ * Generate server's part of the shared private key, i.e. g**b according to DH protocol
  * 
- * @return EVP_PKEY* 
+ * @return the generated key on success, NULL otherwise
  */
 EVP_PKEY* ServerThread::generate_key_dh ()
 {
@@ -288,12 +403,16 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 }
 
 /**
- * // TODO
+ * Derive a shared session key from server's generated key and client's received key
+ * according to Diffie-Hellman key exchange method.
+ * The shared secret obtained by the merge of server and client's keys is then
+ * hashed with SHA-256 and the first <key_len> bytes are used as shared key
  * 
- * @param my_dh_key 
- * @param peer_key 
- * @param key_len 
- * @return  
+ * @param my_dh_key the key generated by the server
+ * @param peer_key the key generated by the client
+ * @param key_len the required length of the key
+ * 
+ * @return the sessione key on success, NULL otherwise
  */
 unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key, 
                                                  EVP_PKEY* peer_key, 
@@ -435,16 +554,24 @@ const EVP_CIPHER* ServerThread::get_symmetric_cipher ()
 	return EVP_aes_128_cbc();
 }
 
+/**
+ * Receive the first messages sent by the client. This is the first phase of STS protocol.
+ * 
+ * The first messages that the client has to send are:
+ *   1) His username
+ *   2) The value g**a neded for the Diffie-Hellmann protocol
+ * Those are sent in cleartext, since they aren't critical data and no session key is established yet.
+ * 
+ * @param peer_key it will contain the client's key on success
+ * @param username it will contain the client's username on success
+ * 
+ * @return 1 on success, 0 if the client closed its socket, -1 otherwise
+ */
 int ServerThread::receive_hello_message (EVP_PKEY*& peer_key, string& username)
 {
 	int ret_int;
 	long ret_long;
 
-	/* The first messages that the client has to send are:
-		1) His username
-		2) The value g**a neded for the Diffie-Hellmann protocol
-		Those are sent in cleartext
-	*/
 	// Get the username
 	char* username_c = nullptr;
 	ret_long = receive_message(client_socket, (void**)&username_c);
@@ -493,7 +620,7 @@ int ServerThread::receive_hello_message (EVP_PKEY*& peer_key, string& username)
  * i.e. if its public key is installed on the server
  * 
  * @param username name of the user
- * @return 1 if the username is valid, 0 if
+ * @return 1 if the username is valid, 0 otherwise
  */
 bool ServerThread::check_username_validity (const string& username)
 {
@@ -503,6 +630,7 @@ bool ServerThread::check_username_validity (const string& username)
 	FILE* file = fopen(file_name.c_str(), "r");
 	
 	if (file) {
+		// The file exists
 		fclose(file);
 		return true;
 	}
@@ -595,7 +723,7 @@ int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared
 		
 		// Sign concat keys and remove them
 		unsigned int signature_len = 0;
-		unsigned char* signature = server->sign_message(concat_keys, concat_keys_len, signature_len);
+		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
 
 		#pragma optimize("", off)
 			memset(concat_keys, 0, concat_keys_len);
@@ -795,3 +923,4 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 	free(iv);
 	return ciphertext;
 }
+

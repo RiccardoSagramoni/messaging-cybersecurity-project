@@ -18,8 +18,7 @@ Server::~Server()
  * Configure the listener socket, bind server IP address
  * and start listening for client's requests.
  * 
- * @return true on success
- * @return false on failure
+ * @return true on success, false on failure
  */
 bool Server::configure_listener_socket ()
 {
@@ -57,10 +56,9 @@ bool Server::configure_listener_socket ()
  * 
  * @param client_addr IP address of client
  * 
- * @return id of new socket on success
- * @return -1 on failure
+ * @return id of new socket on success, -1 on failure
  */
-int Server::accept_client (sockaddr_in* client_addr) const
+int Server::accept_client (sockaddr_in* client_addr)
 {
     socklen_t addr_len = sizeof(client_addr);
 
@@ -75,8 +73,7 @@ int Server::accept_client (sockaddr_in* client_addr) const
  * @param username string identifier of the client
  * @param socket socket linked to the client
  * 
- * @return true on success
- * @return false on failure (client already logged in)
+ * @return true on success, false on failure (client already logged in)
  */
 bool Server::add_new_client (string username, const int socket)
 {
@@ -100,8 +97,7 @@ bool Server::add_new_client (string username, const int socket)
  * @param lock true to lock the socket, false to unlock it
  * @param input true to lock INPUT stream of socket, false to lock OUTPUT stream of socket
  * 
- * @return true on success
- * @return false on failure
+ * @return true on success, false on failure
  */
 bool Server::handle_socket_lock (const string username, const bool lock, const bool input)
 {
@@ -159,6 +155,12 @@ list<string> Server::get_available_clients_list ()
 	return l;
 }
 
+/**
+ * Check is a specified client is currently online (logged on the server)
+ * 
+ * @param username identifier of client
+ * @return true if the client is online, false otherwise 
+ */
 bool Server::is_client_online (const string& username)
 {
 	// Acquire lock for reading the client data's container
@@ -167,6 +169,12 @@ bool Server::is_client_online (const string& username)
 	return (connected_client.count(username) != 0);
 }
 
+/**
+ * Close connection with specified client
+ * 
+ * @param username identifier of the client
+ * @return 1 on success, -1 on failure 
+ */
 int Server::close_client (const string username)
 {
 	// Acquire lock for reading the client data's container
@@ -196,85 +204,4 @@ int Server::close_client (const string username)
 	close(client_data->socket);
 
 	return 1;
-}
-
-/**
- * // TODO
- * 
- * @return EVP_PKEY* 
- */
-EVP_PKEY* Server::get_private_key ()
-{
-
-	// Load my private key:
-	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
-	if (!prvkey_file) {
-		cerr << "[Thread " << this_thread::get_id() << "] Error: "
-		<< "Cannot open " << filename_prvkey << endl;
-		return nullptr;
-	}
-
-	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, NULL);
-	fclose(prvkey_file);
-	if(!prvkey) { 
-		cerr << "[Thread " << this_thread::get_id() << "] Error: "
-		<< "PEM_read_PrivateKey returned NULL" << endl; 
-		return nullptr;
-	}
-
-	return prvkey;
-}
-
-/**
- * // TODO
- * 
- * @param msg 
- * @param msg_len 
- * @param signature_len 
- * @return unsigned* 
- */
-unsigned char* Server::sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len)
-{
-	int ret;
-	EVP_PKEY* prvkey = nullptr;
-	EVP_MD_CTX* ctx = nullptr;
-	unsigned char* signature = nullptr;
-	
-	try {
-		prvkey = get_private_key();
-		if (!prvkey) throw 0;
-		
-		ctx= EVP_MD_CTX_new();
-		if (!ctx) throw 1;
-
-		ret = EVP_SignInit(ctx, EVP_sha256());
-		if (ret != 1) throw 2;
-
-		ret = EVP_SignUpdate(ctx, msg, msg_len);
-		if (ret != 1) throw 2;
-
-		signature_len = EVP_PKEY_size(prvkey);
-		signature = (unsigned char*)malloc(signature_len);
-		if (!signature) throw 2;
-
-		ret = EVP_SignFinal(ctx, signature, &signature_len, prvkey);
-		if (ret != 1) throw 3;
-
-	} catch (int e) {
-		if (e >= 3) {
-			free(signature);
-		}
-		if (e >= 2) {
-			EVP_MD_CTX_free(ctx);
-		}
-		if (e >= 1) {
-			EVP_PKEY_free(prvkey);
-		}
-		return nullptr;
-	}
-	
-	EVP_MD_CTX_free(ctx);
-	EVP_PKEY_free(prvkey);
-
-	return signature;
 }

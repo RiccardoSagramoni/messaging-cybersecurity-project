@@ -42,8 +42,7 @@ struct connection_data {
 
 class Server {
 	static const int BACKLOG_LEN = 10;
-	const string filename_prvkey = "privkey.pem";
-	const string filename_certificate = "certificate.pem";
+	
 
 	int listener_socket = -1;
 	sockaddr_in server_address;
@@ -55,90 +54,40 @@ class Server {
 	// Shared mutex for accessing the hashed map
 	shared_timed_mutex connected_client_mutex;
 
-	/**
-	 * // TODO
-	 * 
-	 * @return EVP_PKEY* 
-	 */
-	EVP_PKEY* get_private_key ();
+	
 	
 
 public:
 	Server(const uint16_t port);
 	~Server();
 
-	/**
-	 * Configure the listener socket, bind server IP address
-	 * and start listening for client's requests.
-	 * 
-	 * @return true on success
- 	 * @return false on failure
-	 */
+	// Functions that handle connection with clients {
+
 	bool configure_listener_socket();
-
-	/** 
-	 * Accept client connection request from listener socker.
-	 * Create a new socket for communication with the client.
-	 * 
-	 * @param client_addr IP address of client
-	 * 
-	 * @return id of new socket on success
-	 * @return -1 on failure
-	 */
-	int accept_client (sockaddr_in* client_addr) const;
-
-	/**
-	 * Add a new client to the list of all the clients connected to the server
-	 * and set its state to "available to talk".
-	 * 
-	 * @param username string identifier of the client
-	 * @param socket socket linked to the client
-	 * @return true on success
-	 * @return false on failure (client already logged in)
-	 */
+	int accept_client (sockaddr_in* client_addr);
 	bool add_new_client (string username, const int socket);
-
-	/**
-	 * Exclusively lock/unlock INPUT or OUTPUT stream of the socket related to specified client
-	 * 
-	 * @param username string containing client's username
-	 * @param lock true to lock the socket, false to unlock it
-	 * @param input true to lock INPUT stream of socket, false to lock OUTPUT stream of socket
-	 * 
-	 * @return true on success
-	 * @return false on failure
-	 */
 	bool handle_socket_lock (const string username, const bool lock, const bool input);
-
-	/**
-	 * // TODO
-	 * 
-	 * @param username 
-	 * @return int 
-	 */
 	int close_client (const string username);
-
-	/**
-	 * Return a list of client logged to the server and available to talk
-	 * 
-	 * @return list of available client's usernames
-	 */
+	
+	// }
+	
+	// Functions that monitor current status of client connections {
+	
 	list<string> get_available_clients_list ();
-
-	/**
-	 * // TODO
-	 * @return true 
-	 * @return false 
-	 */
 	bool is_client_online (const string& username);
 
-	
+	// }
+
+	// Functions that 
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 };
 
 
 
 class ServerThread {
+	const string filename_prvkey = "privkey.pem";
+	const string filename_certificate = "certificate.pem";
+	
 	Server* server;
 	
 	int client_socket;
@@ -146,76 +95,57 @@ class ServerThread {
 
 	string username;
 
-	/**
-	 * // TODO
-	 * 
-	 * @return DH* 
-	 */
-	static DH* get_dh2048();
+	// Base methods for networking {
 
-	/**
-	 * Send a message though the specified socket
-	 * 
-	 * @param socket socket descriptor
-	 * @param msg pointer to the message
-	 * @param msg_len length of the message 
-	 * @return 1 on success, -1 otherwise 
-	 */
 	int send_message (const int socket, void* msg, const uint32_t msg_len);
-
-	/**
-	 * Wait for a message, expected on the specified socket
-	 * 
-	 * @param socket socket descriptor
-	 * @param msg the address of a pointer. 
-	 * After a successful function invocation, such a pointer will point 
-	 * to an allocated buffer containing the received message.
-	 *            
-	 * @return length of message on success, 0 if client closed the connection on the socket, 
-	 * -1 if any error occurred
-	 */
 	long receive_message (const int socket, void** msg);
 
+	// }
+
+
+	// Fundamental methods for cryptography {
+	
+	static const EVP_CIPHER* get_symmetric_cipher ();
+	
+	static DH* get_dh2048();
+	static EVP_PKEY* generate_key_dh ();
+	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
+	
+	EVP_PKEY* get_private_key ();
+	X509* get_server_certificate();
+	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
+
+	// }
+
+
+	// Management of client's request {
+
 	unsigned char* get_new_client_command ();
-
 	int execute_client_command (const unsigned char* msg);
-
 	int execute_show (const unsigned char*);
 	int execute_talk (const unsigned char*);
 	int execute_exit ();
 
 	uint8_t get_request_type (const unsigned char* msg);
-
-
-	//
-	bool authenticate_and_negotiate_keys (string& username);
-	static EVP_PKEY* generate_key_dh ();
-	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
-	static const EVP_CIPHER* get_symmetric_cipher ();
-	int receive_hello_message (EVP_PKEY*& peer_key, string& username);
 	bool check_username_validity(const string& username);
-	int send_session_key_STS (unsigned char* shared_key, size_t shared_key_len, EVP_PKEY* my_dh_key, EVP_PKEY* peer_key);
-	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, unsigned char* key, size_t key_len, size_t& ciphertext_len);
-	X509* get_server_certificate();
-	//
-//
-//	int receive_client_nonce(string& username, unsigned char** msg);
-//
-//	int encrypt_data_pubkey ();
+
+	// }
+
+
+	// Authentication and negotiation of keys {
+	
+	unsigned char* authenticate_and_negotiate_key (string& username, size_t& key_len);
+	int receive_hello_message (EVP_PKEY*& peer_key, string& username);
+	int send_session_key_STS (unsigned char* shared_key, size_t shared_key_len, 
+	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key);
+	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, 
+	                                unsigned char* key, size_t key_len, size_t& ciphertext_len);
+	
+	// }
 
 public:
-	/**
-	 * Constructor
-	 * 
-	 * @param _server pointer to server object
-	 * @param socket descriptor of the socket created for the client's connection request
-	 * @param addr IP address of connected client
-	 */
 	ServerThread(Server* _server, const int socket, const sockaddr_in addr);
 	
-	/**
-	 * Start the thread
-	 */
 	void run();
 };
 
