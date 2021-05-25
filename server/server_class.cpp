@@ -18,8 +18,7 @@ Server::~Server()
  * Configure the listener socket, bind server IP address
  * and start listening for client's requests.
  * 
- * @return true on success
- * @return false on failure
+ * @return true on success, false on failure
  */
 bool Server::configure_listener_socket ()
 {
@@ -57,10 +56,9 @@ bool Server::configure_listener_socket ()
  * 
  * @param client_addr IP address of client
  * 
- * @return id of new socket on success
- * @return -1 on failure
+ * @return id of new socket on success, -1 on failure
  */
-int Server::accept_client (sockaddr_in* client_addr) const
+int Server::accept_client (sockaddr_in* client_addr)
 {
     socklen_t addr_len = sizeof(client_addr);
 
@@ -75,8 +73,7 @@ int Server::accept_client (sockaddr_in* client_addr) const
  * @param username string identifier of the client
  * @param socket socket linked to the client
  * 
- * @return true on success
- * @return false on failure (client already logged in)
+ * @return true on success, false on failure (client already logged in)
  */
 bool Server::add_new_client (string username, const int socket)
 {
@@ -100,8 +97,7 @@ bool Server::add_new_client (string username, const int socket)
  * @param lock true to lock the socket, false to unlock it
  * @param input true to lock INPUT stream of socket, false to lock OUTPUT stream of socket
  * 
- * @return true on success
- * @return false on failure
+ * @return true on success, false on failure
  */
 bool Server::handle_socket_lock (const string username, const bool lock, const bool input)
 {
@@ -159,7 +155,26 @@ list<string> Server::get_available_clients_list ()
 	return l;
 }
 
+/**
+ * Check is a specified client is currently online (logged on the server)
+ * 
+ * @param username identifier of client
+ * @return true if the client is online, false otherwise 
+ */
+bool Server::is_client_online (const string& username)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 
+	return (connected_client.count(username) != 0);
+}
+
+/**
+ * Close connection with specified client
+ * 
+ * @param username identifier of the client
+ * @return 1 on success, -1 on failure 
+ */
 int Server::close_client (const string username)
 {
 	// Acquire lock for reading the client data's container
