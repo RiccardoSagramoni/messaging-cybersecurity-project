@@ -111,10 +111,22 @@ class ServerThread {
 	static EVP_PKEY* generate_key_dh ();
 	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
 	
-	EVP_PKEY* get_private_key ();
+	EVP_PKEY* get_server_private_key ();
 	X509* get_server_certificate();
+	static EVP_PKEY* get_client_public_key(const string& username);
+
+	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, 
+	                                unsigned char* key, size_t key_len, 
+									unsigned char* iv, size_t& ciphertext_len);
+	unsigned char* decrypt_message (unsigned char* ciphertext, size_t ciphertext_len, 
+	                                unsigned char* key, size_t key_len, 
+									unsigned char* iv, size_t& msg_len);
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 
+	int verify_client_signature (unsigned char* signature, size_t signature_len, 
+                                 unsigned char* cleartext, size_t cleartext_len,
+								 const string& username);
+	
 	// }
 
 
@@ -132,14 +144,17 @@ class ServerThread {
 	// }
 
 
-	// Authentication and negotiation of keys {
+	// Authentication and negotiation of keys (STS protocol) {
 	
 	unsigned char* authenticate_and_negotiate_key (string& username, size_t& key_len);
-	int receive_hello_message (EVP_PKEY*& peer_key, string& username);
-	int send_session_key_STS (unsigned char* shared_key, size_t shared_key_len, 
-	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key);
-	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, 
-	                                unsigned char* key, size_t key_len, size_t& ciphertext_len);
+	int STS_receive_hello_message (EVP_PKEY*& peer_key, string& username);
+	int STS_send_session_key (unsigned char* shared_key, size_t shared_key_len, 
+	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
+							  unsigned char* iv);
+	int STS_receive_response (unsigned char* shared_key, size_t shared_key_len,
+	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key,
+							  unsigned char* iv, const string& username);
+	
 	
 	// }
 

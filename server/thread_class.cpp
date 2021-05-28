@@ -74,7 +74,7 @@ DH* ServerThread::get_dh2048 ()
  * 
  * @return server's private key
  */
-EVP_PKEY* ServerThread::get_private_key ()
+EVP_PKEY* ServerThread::get_server_private_key ()
 {
 	// Load my private key:
 	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
@@ -112,7 +112,7 @@ unsigned char* ServerThread::sign_message(unsigned char* msg, size_t msg_len, un
 	unsigned char* signature = nullptr;
 	
 	try {
-		prvkey = get_private_key();
+		prvkey = get_server_private_key();
 		if (!prvkey) throw 0;
 		
 		ctx= EVP_MD_CTX_new();
@@ -162,7 +162,9 @@ void ServerThread::run()
 	size_t key_len = 0;
 	unsigned char* key = authenticate_and_negotiate_key(username, key_len);
 	if(!key) {
-		// TODO
+		cerr << "[Thread " << this_thread::get_id() << "] run: : "
+			<< "authenticate_and_negotiate_key failed."
+			<< "Closing this thread and socket " << client_socket << endl;
 		close(client_socket);
 		return;
 	}	
@@ -320,35 +322,100 @@ uint8_t ServerThread::get_request_type (const unsigned char* msg)
 unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, size_t& key_len)
 {
 	int ret;
-// 1) Receive clients username and g**a
-	EVP_PKEY* peer_key = nullptr;
-	ret = receive_hello_message(peer_key, username);
-	if (ret < 0) return nullptr;
 
-	// Check if username is valid
-	if(!check_username_validity(username)) {
-		cerr << "Thread " << this_thread::get_id() 
-		     << " authenticate_and_negotiate_key failed: username doesn't exist" 
-		     << endl;
+	EVP_PKEY* peer_key = nullptr;
+	EVP_PKEY* my_dh_key = nullptr;
+	unsigned char* session_key = nullptr;
+	size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
+	unsigned char* iv = nullptr;
+
+	try {
+	// 1) Receive clients username and g**a
+		ret = STS_receive_hello_message(peer_key, username);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "STS_receive_hello_message returned " << ret << endl;
+			throw 0;
+		}
+
+		// 1b) Check if username is valid
+		if(!check_username_validity(username)) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+				<< " authenticate_and_negotiate_key failed: username doesn't exist" 
+				<< endl;
+			throw 1;
+		}
+
+	// 2) Generate random b and calculate g**b (Diffie-Helmann)
+		my_dh_key = generate_key_dh();
+		if (my_dh_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "generate_key_dh failed" << endl;
+			throw 1;
+		}
+
+	// 3) Derive shared secret k and hash it
+		session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
+		if (!session_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "derive_sessione_key failed" << endl;
+			throw 2;
+		}
+
+	// 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
+		// 4a) Allocate and initialize IV
+		iv = (unsigned char*)malloc(EVP_CIPHER_iv_length(get_symmetric_cipher()));
+		if (!iv) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "malloc iv failed" << endl;
+			throw 3;
+		}
+		ret = RAND_bytes(iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "RAND_bytes failed" << endl;
+			throw 4;
+		}
+		ret = STS_send_session_key(session_key, session_key_len, my_dh_key, peer_key, iv);
+		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "STS_send_session_key failed" << endl;
+			throw 4;
+		}
+
+	// 5) Receive response message by client and check its validity
+		// Message is encrypted_k{sign_by_client{g**a,g**b}}
+		ret = STS_receive_response(session_key, session_key_len, my_dh_key, peer_key, iv, username);
+		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
+			<< "STS_receive_response failed" << endl;
+			throw 4;
+		}
+
+	} catch (int e) {
+		if (e >= 4) {
+			free(iv);
+		}
+		if (e >= 3) {
+			#pragma optimize("", off)
+				memset(session_key, 0, session_key_len);
+			#pragma optimize("", on)
+			free(session_key);
+		}
+		if (e >= 2) {
+			EVP_PKEY_free(my_dh_key);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(peer_key);
+		}
 		return nullptr;
 	}
 
-// 2) Generate random b and calculate g**b (Diffie-Helmann)
-	EVP_PKEY* my_dh_key = generate_key_dh();
-	if (my_dh_key) return nullptr;
+	free(iv);
+	EVP_PKEY_free(my_dh_key);
+	EVP_PKEY_free(peer_key);
 
-// 3) Derive shared secret k and hash it
-	size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
-	unsigned char* session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
-	if (!session_key) return nullptr;
-
-// 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
-	// TODO HERE!
-
-
-// 5) Recevive encrypted_k{encrypted_client{g**a,g**b}}
-
-// 6) Check validity
+	return session_key;
 }
 
 /**
@@ -567,7 +634,7 @@ const EVP_CIPHER* ServerThread::get_symmetric_cipher ()
  * 
  * @return 1 on success, 0 if the client closed its socket, -1 otherwise
  */
-int ServerThread::receive_hello_message (EVP_PKEY*& peer_key, string& username)
+int ServerThread::STS_receive_hello_message (EVP_PKEY*& peer_key, string& username)
 {
 	int ret_int;
 	long ret_long;
@@ -652,10 +719,11 @@ bool ServerThread::check_username_validity (const string& username)
  * @param shared_key_len the length of the shared key
  * @param my_dh_key server's part of DH key (g**b)
  * @param peer_key client's part of DH key (g**b)
+ * @param iv initialization vector for AES cipher (CBC mode)
  * 
  * @return 1 on success, -1 on failure
  */
-int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared_key_len, EVP_PKEY* my_dh_key, EVP_PKEY* peer_key)
+int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared_key_len, EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* iv)
 {
 	int ret;
 	long ret_long;
@@ -675,45 +743,54 @@ int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared
 	size_t ser_certificate_len = 0;
 
 	try {
-		// Serialize server's key (g**b)
+		// 1) Serialize server's key (g**b)
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
-			// TODO cerr
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_new failed" << endl;
 			throw 0;
 		}
 
 		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
 		if (ret != 1) {
-			// TODO cerr
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
 			throw 1;
 		}
 
 		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
 		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_get_mem_data returned " << ret_long << endl;
 			throw 1;
 		}
 
 		my_key_len = (uint32_t)ret_long;
 
 
-		// -) Prepare string < g**b, g**a > for signature
-
-		// Serialize peer key
+		// 2) Prepare string < g**b, g**a > for signature
+		// 2a) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
-		if (ret != 0) {
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
 			throw 2;
 		}
 
 		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
 		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_get_mem_data returned " << ret_long << endl;
 			throw 2;
 		}
 		peer_key_len = (uint32_t)ret_long;
 
-		// Concat my_key and peer_key
+		// 2b) Concat my_key and peer_key
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "malloc concat_keys failed" << endl;
 			throw 3;
 		}
 
@@ -721,7 +798,7 @@ int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared
 		memcpy(concat_keys + my_key_len, peer_key_buf, peer_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
 		
-		// Sign concat keys and remove them
+		// 2c) Sign concat keys and remove them
 		unsigned int signature_len = 0;
 		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
 
@@ -731,11 +808,14 @@ int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared
 		free(concat_keys);
 
 		if (!signature) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "sign_message failed" << endl;
 			throw 3;
 		}
 
-		// Encrypt signature and delete it
-		encrypted_sign = encrypt_message(signature, signature_len, shared_key, shared_key_len, encrypted_sign_len);
+		// 3) Encrypt signature and delete it
+		encrypted_sign = encrypt_message(signature, signature_len, shared_key, shared_key_len, 
+		                                 iv, encrypted_sign_len);
 
 		free(signature);
 		#pragma optimize("", off)
@@ -743,36 +823,56 @@ int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared
 		#pragma optmize("", on)
 
 		if (!encrypted_sign) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "encrypt_message failed" << endl;
 			throw 3;
 		}
 
-		// Extract and serialize certificate
+		// 4) Extract and serialize certificate
 		certificate = get_server_certificate();
 		if (!certificate) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "get_server_certificate failed" << endl;
 			throw 4;
 		}
 		ret = i2d_X509(certificate, &ser_certificate);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "i2d_X509 failed" << endl;
 			throw 5;
 		}
 		ser_certificate_len = ret;
 
-		// SEND MESSAGES TO CLIENT
-		// 1) g**b
+		// 5) SEND MESSAGES TO CLIENT
+		// 5a) g**b
 		ret = send_message(client_socket, (void*)my_key_buf, my_key_len);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "send_message g**b failed" << endl;
 			throw 6;
 		}
 
-		// 2) encrypted signature
+		// 5b) encrypted signature
 		ret = send_message(client_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "send_message encrypted_signature" << endl;
 			throw 6;
 		}
 
-		// 3) server certificate
+		// 5c) server certificate
 		ret = send_message(client_socket, (void*)ser_certificate, ser_certificate_len);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "send_message server_certificate failed" << endl;
+			throw 6;
+		}
+
+		// 5d) iv
+		ret = send_message(client_socket, (void*)iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "send_message iv failed" << endl;
 			throw 6;
 		}
 
@@ -834,18 +934,18 @@ int ServerThread::send_session_key_STS (unsigned char* shared_key, size_t shared
  * @param msg_len length of the message to encrypt
  * @param key pointer to the key
  * @param key_len length of the key
+ * @param iv initialization vector for AES cipher (CBC mode)
  * @param ciphertext_len the length of the final ciphertext will be returned through this reference
  * 
  * @return address to the ciphertext on success, NULL on failure
  */
 unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len, 
-                                              unsigned char* key, size_t key_len,
-											  size_t& ciphertext_len)
+                                              unsigned char* key, size_t key_len, 
+                                              unsigned char* iv, size_t& ciphertext_len)
 {
 	int ret;
 	EVP_CIPHER_CTX* ctx = nullptr;
 	unsigned char* ciphertext = nullptr;
-	unsigned char* iv = nullptr;
 
 	try {
 		// Allocate ciphertext
@@ -856,20 +956,6 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 			throw 0;
 		}
 		
-		// Allocate and initialize IV
-		iv = (unsigned char*)malloc(EVP_CIPHER_iv_length(get_symmetric_cipher()));
-		if (!iv) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "malloc iv failed" << endl;
-			throw 1;
-		}
-		ret = RAND_bytes(iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "RAND_bytes failed" << endl;
-			throw 2;
-		}
-
 		// Allocate context for encryption
 		ctx = EVP_CIPHER_CTX_new();
 		if (!ctx) {
@@ -879,11 +965,11 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 		}
 
 		// Initialize encryption context
-		ret = EVP_EncryptInit(ctx, get_symmetric_cipher(), key, nullptr);
+		ret = EVP_EncryptInit(ctx, get_symmetric_cipher(), key, iv);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
 			<< "EVP_EncryptIniti failed" << endl;
-			throw 3;
+			throw 2;
 		}
 
 		// Encrypt message
@@ -892,7 +978,7 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
 			<< "EVP_EncryptionUpdate failed" << endl;
-			throw 3;
+			throw 2;
 		}
 
 		// Finalize encryption
@@ -901,17 +987,14 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
 			<< "EVP_EncryptionUpdate failed" << endl;
-			throw 3;
+			throw 2;
 		}
 
 		ciphertext_len += outl;
 		
 	} catch (int e) {
-		if (e >= 3) {
-			EVP_CIPHER_CTX_free(ctx);
-		}
 		if (e >= 2) {
-			free(iv);
+			EVP_CIPHER_CTX_free(ctx);
 		}
 		if (e >= 1) {
 			free(ciphertext);
@@ -920,7 +1003,250 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 	}
 
 	EVP_CIPHER_CTX_free(ctx);
-	free(iv);
 	return ciphertext;
 }
 
+/**
+ * Receive the messages of the third step of Station-to-Station protocol, so that
+ * the authentication pahse can be ended.
+ * The message received is: encrypted_k{sign_by_client{g**a,g**b}}
+ * 
+ * @param shared_key symmetric key established between server and client
+ * @param shared_key_len length of shared key
+ * @param my_dh_key g**b, i.e. server's part of DH key
+ * @param peer_key g**a, i.e. client's part of DH key
+ * 
+ * @return 1 on success, -1 on failure
+ */
+int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared_key_len,
+                                        EVP_PKEY* my_dh_key, EVP_PKEY* peer_key,
+										unsigned char* iv, const string& username)
+{
+	int ret;
+	long ret_long;
+
+	unsigned char* ciphertext = nullptr;
+	unsigned char* client_signature = nullptr;
+	size_t client_signature_len = 0;
+
+	BIO* mbio = nullptr;
+	unsigned char* my_key_buf = nullptr;
+	size_t my_key_len = 0;
+	unsigned char* peer_key_buf = nullptr;
+	size_t peer_key_len = 0;
+
+	try {
+		// 1) Receive message from client
+		// encrypted_k{sign_by_client{g**a,g**b}}
+		ret = receive_message(client_socket, (void**)&ciphertext);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_receive_response: "
+			<< "receive_message failed" << endl;
+			throw 0;
+		}
+		size_t ciphertext_len = ret;
+		
+
+		// 2) Serialize g**b (server's DH key) and g**a (client's DH key).
+		// Then concatenate them.
+
+		// 2a) Serialize server's key (g**b)
+		mbio = BIO_new(BIO_s_mem());
+		if (!mbio) {
+			throw 1;
+		}
+
+		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
+		if (ret != 1) {
+			throw 2;
+		}
+
+		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
+		if (ret_long <= 0) {
+			throw 2;
+		}
+		my_key_len = ret_long;
+
+		// 2b) Serialize peer key
+		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
+		if (ret != 0) {
+			throw 3;
+		}
+
+		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
+		if (ret_long <= 0) {
+			throw 3;
+		}
+		peer_key_len = ret_long;
+
+		// 2c) Concat peer_key and my_key
+		size_t concat_keys_len = my_key_len + peer_key_len + 1;
+		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
+		if (!concat_keys) {
+			throw 4;
+		}
+
+		memcpy(concat_keys, peer_key_buf, peer_key_len);
+		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
+		concat_keys[concat_keys_len - 1] = '\0';
+
+		#pragma optimize("", off);
+				memset(concat_keys, 0, concat_keys_len);
+		#pragma optimize("", on);
+		free(concat_keys);
+
+		// 3) Encrypt received message with shared key
+		client_signature = decrypt_message(ciphertext, ciphertext_len, shared_key, shared_key_len, iv, client_signature_len);
+		if (!client_signature) {
+			throw 4;
+		}
+
+		// 4) Verify correctness of client's response to STS protocol
+		ret = verify_client_signature(client_signature, client_signature_len, 
+		                              concat_keys, concat_keys_len, username);
+		if (ret < 0) {
+			throw 5;
+		}
+
+	} catch (int e) {
+		if (e >= 5) {
+			#pragma optimize("", off);
+				memset(client_signature, 0, client_signature_len);
+			#pragma optimize("", on);
+			free(client_signature);
+		}
+		if (e >= 4) {
+			#pragma optimize("", off);
+				memset(peer_key_buf, 0, peer_key_len);
+			#pragma optimize("", on);
+			free(peer_key_buf);
+		}
+		if (e >= 3) {
+			#pragma optimize("", off);
+				memset(my_key_buf, 0, my_key_len);
+			#pragma optimize("", on);
+			free(my_key_buf);
+		}
+		if (e >= 2) {
+			free(mbio);
+		}
+		if (e >= 1) {
+			free(ciphertext);
+		}
+		return -1;
+	}
+
+	#pragma optimize("", off);
+		memset(client_signature, 0, client_signature_len);
+		memset(peer_key_buf, 0, peer_key_len);
+		memset(my_key_buf, 0, my_key_len);
+	#pragma optimize("", on);
+
+	free(client_signature);
+	free(peer_key_buf);
+	free(my_key_buf);
+	free(mbio);
+	free(ciphertext);
+
+	return 1;
+}
+
+/**
+ * Verify if a signature made by a client is correct
+ * 
+ * @param signature signature too verify
+ * @param signature_len length of the signature
+ * @param cleartext text that is supposed to be signed
+ * @param cleartext_len length of cleartext
+ * @param username username of the client that signed the cleartext
+ * @return 1 on success, -1 if the verification process failes, -2 if the public key of the user isn't installed on the server
+ */
+int ServerThread::verify_client_signature (unsigned char* signature, size_t signature_len, 
+                                           unsigned char* cleartext, size_t cleartext_len,
+								           const string& username)
+{
+	EVP_PKEY* client_pubkey = nullptr;
+	EVP_MD_CTX* ctx = nullptr;
+
+	int ret;
+	int return_value = -1;
+	
+	try {
+		// 1) Get client's public key
+		client_pubkey = get_client_public_key(username);
+		if (!client_pubkey) {
+			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			<< "client's public key is not installed" << endl;
+			return_value = -2;
+			throw 0;
+		}
+
+		// 2) Verify signature
+		ctx = EVP_MD_CTX_new();
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			<< "EVP_MD_CTX_new returned NULL" << endl;
+			throw 1;
+		}
+
+		ret = EVP_VerifyInit(ctx, EVP_sha256());
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			<< "EVP_VerifyInit returned " << ret << endl;
+			throw 2;
+		}
+
+		ret = EVP_VerifyUpdate(ctx, cleartext, cleartext_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			<< "EVP_VerifyUpdate returned " << ret << endl;
+			throw 2;
+		}
+
+		ret = EVP_VerifyFinal(ctx, signature, signature_len, client_pubkey);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			<< "EVP_VerifyFinal returned " << ret << endl;
+			throw 2;
+		}
+
+	} catch (int e) {
+		if (e >= 2) {
+			EVP_MD_CTX_free(ctx);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(client_pubkey);
+		}
+		return return_value;
+	}
+
+	return 1;
+}
+
+/**
+ * Get specified user's public key, which should have been installed on the server
+ * 
+ * @param username identifier of the user
+ * @return public key of the user on success, NULL on failure
+ */
+EVP_PKEY* ServerThread::get_client_public_key (const string& username)
+{
+	// Load client's public key:
+	string filename = (string)"clients/" + username;
+	FILE* pubkey_file = fopen(filename.c_str(), "r");
+	if (!pubkey_file) {
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_public_key: "
+		<< "Cannot open " << filename << endl;
+		return nullptr;
+	}
+
+	EVP_PKEY* prvkey = PEM_read_PUBKEY(pubkey_file, NULL, NULL, NULL);
+	fclose(pubkey_file);
+	if(!prvkey) { 
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_public_key: "
+		<< "PEM_read_PUBKEY returned NULL" << endl; 
+		return nullptr;
+	}
+
+	return prvkey;
+}
