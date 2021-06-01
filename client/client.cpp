@@ -8,12 +8,11 @@ void thread_main (Client* client, const int socket, const sockaddr_in addr)
 	ClientThread st(client, socket, addr);
 	st.run();
 }
-
 void send_thread (Client* client, const int socket, const sockaddr_in addr) 
 {
 	ClientThread st(client, socket, addr);
     while (true) {
-        st.send_message;
+        // TODO st.send_message(...);
     }
 	
 }
@@ -22,7 +21,7 @@ void receive_thread (Client* client, const int socket, const sockaddr_in addr)
 {
 	ClientThread st(client, socket, addr);
     while (true) {
-        st.receive_message;
+       // TODO st.receive_message(...);
     }
 	
 }
