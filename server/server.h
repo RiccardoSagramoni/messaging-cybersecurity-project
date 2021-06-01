@@ -132,11 +132,11 @@ class ServerThread {
 
 	// Management of client's request {
 
-	unsigned char* get_new_client_command ();
-	int execute_client_command (const unsigned char* msg);
-	int execute_show (const unsigned char*);
-	int execute_talk (const unsigned char*);
-	int execute_exit ();
+	//unsigned char* get_new_client_command ();
+	//int execute_client_command (const unsigned char* msg);
+	//int execute_show (const unsigned char*);
+	//int execute_talk (const unsigned char*);
+	//int execute_exit ();
 
 	uint8_t get_request_type (const unsigned char* msg);
 	bool check_username_validity(const string& username);

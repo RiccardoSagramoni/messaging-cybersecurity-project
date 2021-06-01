@@ -95,6 +95,38 @@ EVP_PKEY* ServerThread::get_server_private_key ()
 	return prvkey;
 }
 
+X509* ServerThread::get_server_certificate ()
+{
+	
+	FILE* file = nullptr;
+	X509* cert = nullptr;
+
+	try {
+		file = fopen(filename_certificate.c_str(), "r");
+		if (!file) {
+			cerr << "[Thread " << this_thread::get_id() << "] get_server_certificate: "
+			<< "cannot open file " << filename_certificate << endl;
+			throw 0;
+		}
+
+		cert = PEM_read_X509(file, nullptr, nullptr, nullptr);
+		if (!cert) {
+			cerr << "[Thread " << this_thread::get_id() << "] get_server_certificate: "
+			<< "cannot read X509 certificate " << endl;
+			throw 1;
+		}
+
+	} catch (int e) {
+		if (e >= 1) {
+			fclose(file);
+		}
+		return nullptr;
+	}
+
+	fclose(file);
+	return cert;
+}
+
 /**
  * Sign a message with server's private key
  * 
@@ -174,13 +206,16 @@ void ServerThread::run()
 	// -) Add current client to server
 	server->add_new_client(username, client_socket); // TODO handle failure
 
+
 	// -) Cycle
 		// -) Wait for command
 		// -) Execute command
 	while (true) {
+/*
 		unsigned char* msg = get_new_client_command();
 		ret = execute_client_command(msg);
 		free(msg);
+*/
 
 		// TODO Check ret
 	}
@@ -240,7 +275,7 @@ long ServerThread::receive_message (const int socket, void** msg)
 	if (ret == 0) { // Client closed the connection
 		return 0;
 	}	
-	if (ret < 0 || ret < sizeof(len)) { // Received data too short
+	if (ret < 0 || (unsigned long)ret < sizeof(len)) { // Received data too short
 		perror("Message length receive failed");
 		return -1;
 	}
@@ -276,7 +311,7 @@ long ServerThread::receive_message (const int socket, void** msg)
  * 
  * @param msg received message
  * @return 1 on success, -1 on failure
- */
+ */ /*
 int ServerThread::execute_client_command (const unsigned char* msg) 
 {
 	uint8_t request_type = get_request_type(msg);
@@ -297,6 +332,7 @@ int ServerThread::execute_client_command (const unsigned char* msg)
 
 	return 1;
 }
+*/
 
 /**
  * Given a message, extract the type of client's message
@@ -645,7 +681,6 @@ int ServerThread::STS_receive_hello_message (EVP_PKEY*& peer_key, string& userna
 	if (ret_long <= 0) {
 		return -1;
 	}
-	size_t username_len = ret_long;
 	username = username_c;
 	free(username_c);
 
@@ -961,7 +996,7 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 		if (!ctx) {
 			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
 			<< "EVP_CIPHER_CTX_new failed" << endl;
-			throw 2;
+			throw 1;
 		}
 
 		// Initialize encryption context
@@ -1004,6 +1039,82 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 
 	EVP_CIPHER_CTX_free(ctx);
 	return ciphertext;
+}
+
+/**
+ * 
+ * @param ciphertext 
+ * @param ciphertext_len 
+ * @param key 
+ * @param key_len 
+ * @param iv 
+ * @param msg_len 
+ * @return unsigned* 
+ */
+unsigned char* ServerThread::decrypt_message (unsigned char* ciphertext, size_t ciphertext_len,       
+                                              unsigned char* key, size_t key_len, 
+											  unsigned char* iv, size_t& msg_len) 
+{
+	
+	int ret;
+	unsigned char* plaintext = nullptr;
+	EVP_CIPHER_CTX* ctx = nullptr;
+	
+	try {
+		plaintext = (unsigned char*)malloc(ciphertext_len);
+		if (!plaintext) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
+			<< "malloc plaintext failed" << endl;
+			throw 0;
+		}
+
+		ctx = EVP_CIPHER_CTX_new();
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
+			<< "EVP_CIPHER_CTX_new failed" << endl;
+			throw 1;
+		}
+
+		ret = EVP_DecryptInit(ctx, get_symmetric_cipher(), key, iv); 
+		if (ret!=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
+			<< "EVP_DecryptionUpdate failed" << endl;
+			throw 2;
+		}
+
+		int outlen = 0;
+
+		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
+		if (ret!=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
+			<< "EVP_DecryptionUpdate failed" << endl;
+			throw 2;
+		}
+
+		msg_len = outlen;
+
+		ret = EVP_DecryptFinal(ctx, plaintext + msg_len, &outlen);
+		if (ret!=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
+			<< "EVP_DecryptionFinal failed" << endl;
+			throw 2;
+		}
+
+		msg_len += outlen;
+
+	} catch (int e) {
+		if (e >= 2) {
+			EVP_CIPHER_CTX_free(ctx);
+		}
+		if (e >= 1) {
+			free(plaintext);
+		}
+		return nullptr;
+	}
+
+	EVP_CIPHER_CTX_free(ctx);
+
+	return plaintext;
 }
 
 /**
