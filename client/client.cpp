@@ -60,6 +60,7 @@ int main(int argc, char** argv) {
     /*thread t(send_thread, &client, client.get_sock(), client.get_server_addr());
     thread tt(receive_thread, &client, client.get_sock(), client.get_server_addr());*/
     thread t(thread_main, &client, client.get_sock(), client.get_server_addr());
+    
     while (true)
     {
         

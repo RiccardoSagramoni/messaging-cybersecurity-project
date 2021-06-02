@@ -51,10 +51,9 @@ class Server {
 	// Key: client's username
 	// Value: data of client (socket, available state...)
 	unordered_map<string, connection_data*> connected_client;
+	
 	// Shared mutex for accessing the hashed map
 	shared_timed_mutex connected_client_mutex;
-
-	
 	
 
 public:
@@ -77,9 +76,6 @@ public:
 	bool is_client_online (const string& username);
 
 	// }
-
-	// Functions that 
-	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 };
 
 
@@ -127,6 +123,7 @@ class ServerThread {
                                  unsigned char* cleartext, size_t cleartext_len,
 								 const string& username);
 	
+	static void secure_free (void* addr, size_t len);
 	// }
 
 
@@ -175,5 +172,3 @@ public:
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
 // }
-
-#define		NONCE_LENGHT	256

@@ -215,56 +215,58 @@ int ClientThread::negotiate(string username) {
 			return false;
 		}
 
-    free(arr);
     BIO_free(mbio);
 	return 1;
 }
 
 
-EVP_PKEY* ClientThread::generate_key_dh()
+/**
+ * Generate server's part of the shared private key, i.e. g**b according to DH protocol
+ * 
+ * @return the generated key on success, NULL otherwise
+ */
+EVP_PKEY* ClientThread::generate_key_dh ()
 {
 	int ret;
 	
-	// Get DH params p and g
-	EVP_PKEY* dh_params = EVP_PKEY_new();
-	if (!dh_params) {
-		// TODO print error?
-		return nullptr;
-	}
-	DH* temp_dh_params = get_dh2048();
-	ret  = EVP_PKEY_set1_DH(dh_params, temp_dh_params);
-	free(temp_dh_params);
-	if (ret != 1) {
-		// TODO print error?
-		return nullptr;
-	}
-
-	// Generate g**b
-	EVP_PKEY_CTX* dh_gen_ctx = EVP_PKEY_CTX_new(dh_params, nullptr);
-	if (!dh_gen_ctx) {
-		// TODO print error?
-		free(dh_params);
-		return nullptr;
-	}
-
-	ret = EVP_PKEY_keygen_init(dh_gen_ctx);
-	if (ret != 1) {
-		// TODO print error?
-		free(dh_params);
-		EVP_PKEY_CTX_free(dh_gen_ctx);
-		return nullptr;
-	}
-
+	EVP_PKEY* dh_params = nullptr;
+	EVP_PKEY_CTX* dh_gen_ctx = nullptr;
 	EVP_PKEY* dh_key = nullptr;
-	ret = EVP_PKEY_keygen(dh_gen_ctx, &dh_key);
-	if (ret != 1) {
-		// TODO print error?
-		free(dh_params);
-		EVP_PKEY_CTX_free(dh_gen_ctx);
+
+	try {
+		// Allocate DH params p and g
+		dh_params = EVP_PKEY_new();
+		if (!dh_params) throw 0;
+
+		// Calculate DH params
+		DH* temp_dh_params = get_dh2048();
+		ret  = EVP_PKEY_set1_DH(dh_params, temp_dh_params);
+		DH_free(temp_dh_params);
+		if (ret != 1) throw 1;
+
+		// Generate g**a
+		dh_gen_ctx = EVP_PKEY_CTX_new(dh_params, nullptr);
+		if (!dh_gen_ctx) throw 1;
+
+		ret = EVP_PKEY_keygen_init(dh_gen_ctx);
+		if (ret != 1) throw 2;
+
+		dh_key = nullptr;
+		ret = EVP_PKEY_keygen(dh_gen_ctx, &dh_key);
+		if (ret != 1) throw 2;
+
+	} catch (int e) {
+		if (e >= 2) {
+			EVP_PKEY_CTX_free(dh_gen_ctx);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(dh_params);
+		}
+
 		return nullptr;
 	}
 
-	free(dh_params);
+	EVP_PKEY_free(dh_params);
 	EVP_PKEY_CTX_free(dh_gen_ctx);
 	return dh_key;
 }
@@ -532,7 +534,7 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 			free(my_key_buf);
 		}
 		if (e >= 2) {
-			free(mbio);
+			BIO_free(mbio);
 		}
 		if (e >= 1) {
 			free(ciphertext);
@@ -549,7 +551,7 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 	free(server_signature);
 	free(peer_key_buf);
 	free(my_key_buf);
-	free(mbio);
+	BIO_free(mbio);
 	free(ciphertext);
 
 	return 1;
@@ -699,11 +701,11 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		// 3) Encrypt signature and delete it
 		encrypted_sign = encrypt_message(signature, signature_len, shared_key, shared_key_len, 
 		                                 iv, encrypted_sign_len);
-
-		free(signature);
+		
 		#pragma optimize("", off)
 			memset(signature, 0, signature_len);
 		#pragma optmize("", on)
+		free(signature);
 
 		if (!encrypted_sign) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "

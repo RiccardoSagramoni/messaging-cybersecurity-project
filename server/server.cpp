@@ -56,5 +56,6 @@ int main (int argc, char** argv)
         }
 
         thread t(new_thread, &server, new_socket, client_addr);
+		t.detach();
 	}
 }

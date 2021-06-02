@@ -433,10 +433,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 			free(iv);
 		}
 		if (e >= 3) {
-			#pragma optimize("", off)
-				memset(session_key, 0, session_key_len);
-			#pragma optimize("", on)
-			free(session_key);
+			secure_free(session_key, session_key_len);
 		}
 		if (e >= 2) {
 			EVP_PKEY_free(my_dh_key);
@@ -475,7 +472,7 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 		// Calculate DH params
 		DH* temp_dh_params = get_dh2048();
 		ret  = EVP_PKEY_set1_DH(dh_params, temp_dh_params);
-		free(temp_dh_params);
+		DH_free(temp_dh_params);
 		if (ret != 1) throw 1;
 
 		// Generate g**b
@@ -494,13 +491,13 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 			EVP_PKEY_CTX_free(dh_gen_ctx);
 		}
 		if (e >= 1) {
-			free(dh_params);
+			EVP_PKEY_free(dh_params);
 		}
 
 		return nullptr;
 	}
 
-	free(dh_params);
+	EVP_PKEY_free(dh_params);
 	EVP_PKEY_CTX_free(dh_gen_ctx);
 	return dh_key;
 }
@@ -564,10 +561,7 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 	ret = EVP_PKEY_derive(key_ctx, secret, &secret_len);
 	EVP_PKEY_CTX_free(key_ctx);
 	if (ret != 1) { 
-		#pragma optimize("", off)
-			memset(secret, 0, secret_len);
-		#pragma optimize("", on)
-		free(secret);
+		secure_free(secret, secret_len);
 
 		return nullptr;
 	}
@@ -615,19 +609,13 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 			free(key);
 		}
 		if (e >= 2) {
-			#pragma optimize("", off)
-				memset(hashed_key, 0, hashed_key_len);
-			#pragma optimize("", on)
-			free(hashed_key);
+			secure_free(hashed_key, hashed_key_len);
 		}
 		if (e >= 1) {
 			EVP_MD_CTX_free(md_ctx);
 		}
 
-		#pragma optimize("", off)
-			memset(secret, 0, secret_len);
-		#pragma optimize("", on)
-		free(secret);
+		secure_free(secret, secret_len);
 
 		cerr << "Thread " << this_thread::get_id() << " failed [derive_session_key]:\n";
 		ERR_print_errors_fp(stderr);
@@ -636,12 +624,8 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 	}
 
 	// Delete protected data
-	#pragma optimize("", off)
-		memset(secret, 0, secret_len);
-		memset(hashed_key, 0, hashed_key_len);
-	#pragma optimize("", on)
-	free(secret);
-	free(hashed_key);
+	secure_free(secret, secret_len);
+	secure_free(hashed_key, hashed_key_len);
 	EVP_MD_CTX_free(md_ctx);
 
 	return key;
@@ -837,10 +821,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		unsigned int signature_len = 0;
 		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
 
-		#pragma optimize("", off)
-			memset(concat_keys, 0, concat_keys_len);
-		#pragma optmize("", on)
-		free(concat_keys);
+		secure_free(concat_keys, concat_keys_len);
 
 		if (!signature) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
@@ -852,10 +833,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		encrypted_sign = encrypt_message(signature, signature_len, shared_key, shared_key_len, 
 		                                 iv, encrypted_sign_len);
 
-		free(signature);
-		#pragma optimize("", off)
-			memset(signature, 0, signature_len);
-		#pragma optmize("", on)
+		secure_free(signature, signature_len);
 
 		if (!encrypted_sign) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
@@ -919,22 +897,13 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			X509_free(certificate);
 		}
 		if (e >= 4) {
-			#pragma optimize("", off);
-				memset(encrypted_sign, 0, encrypted_sign_len);
-			#pragma optimize("", on);
-			free(encrypted_sign);
+			secure_free(encrypted_sign, encrypted_sign_len);
 		}
 		if (e >= 3) {
-			#pragma optimize("", off);
-				memset(peer_key_buf, 0, peer_key_len);
-			#pragma optimize("", on);
-			free(peer_key_buf);
+			secure_free(peer_key_buf, peer_key_len);
 		}
 		if (e >= 2) {
-			#pragma optimize("", off);
-				memset(my_key_buf, 0, my_key_len);
-			#pragma optimize("", on);
-			free(my_key_buf);
+			secure_free(my_key_buf, my_key_len);
 		}
 		if (e >= 1) {
 			BIO_free(mbio);
@@ -945,18 +914,9 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 	// Clean stuff
 	OPENSSL_free(ser_certificate);
 	X509_free(certificate);
-	#pragma optimize("", off);
-		memset(encrypted_sign, 0, encrypted_sign_len);
-	#pragma optimize("", on);
-	free(encrypted_sign);
-	#pragma optimize("", off);
-		memset(peer_key_buf, 0, peer_key_len);
-	#pragma optimize("", on);
-	free(peer_key_buf);
-	#pragma optimize("", off);
-		memset(my_key_buf, 0, my_key_len);
-	#pragma optimize("", on);
-	free(my_key_buf);
+	secure_free(encrypted_sign, encrypted_sign_len);
+	secure_free(peer_key_buf, peer_key_len);
+	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
 
 	return 1;
@@ -1201,10 +1161,7 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
 
-		#pragma optimize("", off);
-				memset(concat_keys, 0, concat_keys_len);
-		#pragma optimize("", on);
-		free(concat_keys);
+		secure_free(concat_keys, concat_keys_len);
 
 		// 3) Encrypt received message with shared key
 		client_signature = decrypt_message(ciphertext, ciphertext_len, shared_key, shared_key_len, iv, client_signature_len);
@@ -1221,25 +1178,16 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 
 	} catch (int e) {
 		if (e >= 5) {
-			#pragma optimize("", off);
-				memset(client_signature, 0, client_signature_len);
-			#pragma optimize("", on);
-			free(client_signature);
+			secure_free(client_signature, client_signature_len);
 		}
 		if (e >= 4) {
-			#pragma optimize("", off);
-				memset(peer_key_buf, 0, peer_key_len);
-			#pragma optimize("", on);
-			free(peer_key_buf);
+			secure_free(peer_key_buf, peer_key_len);
 		}
 		if (e >= 3) {
-			#pragma optimize("", off);
-				memset(my_key_buf, 0, my_key_len);
-			#pragma optimize("", on);
-			free(my_key_buf);
+			secure_free(my_key_buf, my_key_len);
 		}
 		if (e >= 2) {
-			free(mbio);
+			BIO_free(mbio);
 		}
 		if (e >= 1) {
 			free(ciphertext);
@@ -1247,16 +1195,10 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		return -1;
 	}
 
-	#pragma optimize("", off);
-		memset(client_signature, 0, client_signature_len);
-		memset(peer_key_buf, 0, peer_key_len);
-		memset(my_key_buf, 0, my_key_len);
-	#pragma optimize("", on);
-
-	free(client_signature);
-	free(peer_key_buf);
-	free(my_key_buf);
-	free(mbio);
+	secure_free(client_signature, client_signature_len);
+	secure_free(peer_key_buf, peer_key_len);
+	secure_free(my_key_buf, my_key_len);
+	BIO_free(mbio);
 	free(ciphertext);
 
 	return 1;
@@ -1332,6 +1274,21 @@ int ServerThread::verify_client_signature (unsigned char* signature, size_t sign
 	}
 
 	return 1;
+}
+
+/**
+ * Free the allocated memory, without leaving any trace of its content
+ * 
+ * @param addr address to the allocated memory
+ * @param len size of allocated memory
+ */
+void ServerThread::secure_free (void* addr, size_t len) 
+{
+	#pragma optimize("", off);
+		memset(addr, 0, len);
+	#pragma optimize("", on);
+
+	free(addr);
 }
 
 /**
