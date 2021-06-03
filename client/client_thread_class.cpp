@@ -128,18 +128,8 @@ int ClientThread::receive_message (const int socket, void** msg)
 	}
 
 	return len;
-
-
-
-
-
-
-
-
-
-
-
 }
+
 void ClientThread::run()
 {
 	int ret;
@@ -153,70 +143,134 @@ void ClientThread::run()
 
 
 
-int ClientThread::negotiate(string username) {
+int ClientThread::negotiate(string& username) {
     int ret;
     EVP_PKEY* peer_key = nullptr;
 	//sig
 	unsigned char* ciphertext = nullptr;
+	size_t ciphertext_len = 0;
     //generate g^a
     EVP_PKEY* my_dh_key = generate_key_dh();
+	if (!my_dh_key) {
+		cerr << "negotiate(...): generate_key_dh failed" << endl;
+		return -1;
+	}
 
 	X509* cert=nullptr;
 	unsigned char* ser_certificate = nullptr;
 	size_t ser_certificate_len = 0;
+	unsigned char* iv = nullptr;
+    char* arr = nullptr;
+	BIO* mbio = nullptr;
+	char* pubkey_buf = nullptr;
 
+	unsigned char* session_key = nullptr;
+	size_t session_key_len = 0;
 
-
-	unsigned char* iv=nullptr;
-
-    char arr[username.length() + 1];
-    strcpy(arr, username.c_str());
-    if (send_message(main_server_socket, (void*) arr, (uint32_t) strlen(arr))<1) return -1;
-    BIO* mbio = BIO_new(BIO_s_mem());
-    if (!mbio) return -1;
-    ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
-    if (ret <= 0) return -1;
-    char* pubkey_buf = nullptr;
-    long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
-    if (ret_long <= 0) return -1;
-    uint32_t pubkey_size = (uint32_t)ret_long;
-    if (send_message(main_server_socket, (void*)pubkey_buf, pubkey_size)<1) return -1;
-    ret = receive_from_server_pub_key(peer_key);
-	if (ret < 0) return false;
-
-
-    size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
-	unsigned char* session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
-	if (!session_key) return false;
-
-
-
-	ret = receive_message(main_server_socket, (void**)&ciphertext);
-		if (ret <= 0) {
-			return false;
-		}
-	size_t ciphertext_len = ret;
 	
-
-	ret = receive_message(main_server_socket, (void**)&ser_certificate);
-		if (ret <= 0) {
-			return false;
+	try {
+		arr = (char*)malloc(username.length() + 1);
+		if (!arr) {
+			throw 0;
 		}
-	ser_certificate_len = ret;
+    	strcpy(arr, username.c_str());
 
-
-	ret = receive_message(main_server_socket, (void**)&iv);
-		if (ret <= 0) {
-			return false;
-		}
-
-	ret = get_sig(ciphertext, ciphertext_len, my_dh_key, peer_key, session_key, session_key_len, iv);
-		if (ret <= 0) {
-			return false;
+    	ret = send_message(main_server_socket, (void*) arr, (uint32_t) strlen(arr));
+		if (ret < 1) {
+			// TODO cerr
+			throw 1;
 		}
 
-    BIO_free(mbio);
+    	mbio = BIO_new(BIO_s_mem());
+    	if (!mbio) {
+			throw 1;
+		}
+
+		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
+		if (ret <= 0) {
+			throw 2;
+		}
+		
+		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
+		if (ret_long <= 0) throw 2;
+
+		uint32_t pubkey_size = (uint32_t)ret_long;
+		ret = send_message(main_server_socket, (void*)pubkey_buf, pubkey_size);
+		if (ret < 1) throw 2;
+
+		ret = receive_from_server_pub_key(peer_key);
+		if (ret < 0) throw 2;
+
+
+		session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
+		session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
+		if (!session_key) throw 2;
+
+
+		ret = receive_message(main_server_socket, (void**)&ciphertext);
+		if (ret <= 0) {
+			throw 3;
+		}
+
+		ciphertext_len = ret;
+
+
+		ret = receive_message(main_server_socket, (void**)&ser_certificate);
+		if (ret <= 0) {
+			throw 4;
+		}
+		ser_certificate_len = ret;
+
+
+		ret = receive_message(main_server_socket, (void**)&iv);
+		if (ret <= 0) {
+			throw 5;
+		}
+
+		ret = get_sig(ciphertext, ciphertext_len, my_dh_key, peer_key, session_key, session_key_len, iv);
+		if (ret <= 0) {
+			throw 6;
+		}
+
+	} catch (int e) {
+		if (e >= 6) {
+			free(iv);
+		}
+		if (e >= 5) {
+			secure_free(ser_certificate, ser_certificate_len);
+		}
+		if (e >= 4) {
+			secure_free(ciphertext, ciphertext_len);
+		}
+		if (e >= 3) {
+			secure_free(session_key, session_key_len);
+		}
+		if (e >= 2) {
+			BIO_free(mbio);
+		}
+		if (e >= 1) {
+			free(arr);
+		}
+		return -1;
+	}
+
+	free(iv);
+	secure_free(ser_certificate, ser_certificate_len);
+	secure_free(ciphertext, ciphertext_len);
+	secure_free(session_key, session_key_len);
+	BIO_free(mbio);
+	free(arr);
+
 	return 1;
+}
+
+void ClientThread::secure_free (void* addr, size_t len) 
+{
+	#pragma optimize("", off);
+		memset(addr, 0, len);
+	#pragma optimize("", on);
+
+	free(addr);
 }
 
 
@@ -251,7 +305,6 @@ EVP_PKEY* ClientThread::generate_key_dh ()
 		ret = EVP_PKEY_keygen_init(dh_gen_ctx);
 		if (ret != 1) throw 2;
 
-		dh_key = nullptr;
 		ret = EVP_PKEY_keygen(dh_gen_ctx, &dh_key);
 		if (ret != 1) throw 2;
 

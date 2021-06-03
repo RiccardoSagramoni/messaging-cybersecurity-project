@@ -384,7 +384,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 
 	// 2) Generate random b and calculate g**b (Diffie-Helmann)
 		my_dh_key = generate_key_dh();
-		if (my_dh_key) {
+		if (!my_dh_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
 			<< "generate_key_dh failed" << endl;
 			throw 1;
