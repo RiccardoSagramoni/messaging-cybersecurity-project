@@ -1,6 +1,7 @@
 #include "client.h"
 
-ClientThread::ClientThread(Client* cli, const int socket, const sockaddr_in addr) {
+ClientThread::ClientThread(Client* cli, const int socket, const sockaddr_in addr)
+{
     client=cli;
 	main_server_socket = socket;
 	main_server_address = addr;
@@ -89,7 +90,7 @@ int ClientThread::send_message (const int socket, void* msg, const uint32_t msg_
 	return 1;
 }
 
-int ClientThread::receive_message (const int socket, void** msg)
+long ClientThread::receive_message (const int socket, void** msg)
 {
 	ssize_t ret;
 	uint32_t len;
@@ -99,13 +100,13 @@ int ClientThread::receive_message (const int socket, void** msg)
 	if (ret == 0) { // Client closed the connection
 		return 0;
 	}	
-	if (ret < 0 || ret < sizeof(len)) { // Received data too short
-		perror("Message length receive_thread failed");
+	if (ret < 0 || (unsigned long)ret < sizeof(len)) { // Received data too short
+		perror("Message length receive failed");
 		return -1;
 	}
 	
 	// Convert received length to host format
-	len = ntohs(len);
+	len = ntohl(len);
 
 	*msg = malloc(len);
 	if (!(*msg)) {
@@ -119,7 +120,7 @@ int ClientThread::receive_message (const int socket, void** msg)
 		return 0;
 	}
 	if (ret < 0 || ret < len) { // Received data too short
-		perror("Receive per il messaggio fallito");
+		perror("Receive message failed");
 		
 		free(*msg);
 		*msg = nullptr;
@@ -134,16 +135,18 @@ void ClientThread::run()
 {
 	int ret;
 
-	string username;
+	string username = client->get_username();
     negotiate(username);
+	
 	while (true) {
+
 	}
 }
 
 
 
 
-int ClientThread::negotiate(string& username) {
+int ClientThread::negotiate(const string& username) {
     int ret;
     EVP_PKEY* peer_key = nullptr;
 	//sig
@@ -160,7 +163,7 @@ int ClientThread::negotiate(string& username) {
 	unsigned char* ser_certificate = nullptr;
 	size_t ser_certificate_len = 0;
 	unsigned char* iv = nullptr;
-    char* arr = nullptr;
+    char* username_c = nullptr;
 	BIO* mbio = nullptr;
 	char* pubkey_buf = nullptr;
 
@@ -169,13 +172,13 @@ int ClientThread::negotiate(string& username) {
 
 	
 	try {
-		arr = (char*)malloc(username.length() + 1);
-		if (!arr) {
+		username_c = (char*)malloc(username.length() + 1);
+		if (!username_c) {
 			throw 0;
 		}
-    	strcpy(arr, username.c_str());
+    	strcpy(username_c, username.c_str());
 
-    	ret = send_message(main_server_socket, (void*) arr, (uint32_t) strlen(arr));
+    	ret = send_message(main_server_socket, (void*) username_c, (uint32_t) strlen(username_c));
 		if (ret < 1) {
 			// TODO cerr
 			throw 1;
@@ -198,6 +201,7 @@ int ClientThread::negotiate(string& username) {
 		ret = send_message(main_server_socket, (void*)pubkey_buf, pubkey_size);
 		if (ret < 1) throw 2;
 
+		// Second step protocol
 		ret = receive_from_server_pub_key(peer_key);
 		if (ret < 0) throw 2;
 
@@ -249,7 +253,7 @@ int ClientThread::negotiate(string& username) {
 			BIO_free(mbio);
 		}
 		if (e >= 1) {
-			free(arr);
+			free(username_c);
 		}
 		return -1;
 	}
@@ -259,7 +263,7 @@ int ClientThread::negotiate(string& username) {
 	secure_free(ciphertext, ciphertext_len);
 	secure_free(session_key, session_key_len);
 	BIO_free(mbio);
-	free(arr);
+	free(username_c);
 
 	return 1;
 }
@@ -525,10 +529,18 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 			throw 2;
 		}
 		my_key_len = ret_long;
+		my_key_buf = (unsigned char*)malloc(my_key_len);
+		if (!my_key_buf) {
+			throw 2;
+		}
+		ret = BIO_read(mbio, my_key_buf, my_key_len);
+		if (ret < 1) {
+			throw 3;
+		}
 
 		// 2b) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
-		if (ret != 0) {
+		if (ret != 1) {
 			throw 3;
 		}
 
@@ -537,6 +549,14 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 			throw 3;
 		}
 		peer_key_len = ret_long;
+		peer_key_buf = (unsigned char*)malloc(peer_key_len);
+		if (!peer_key_buf) {
+			throw 3;
+		}
+		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
+		if (ret < 1) {
+			throw 4;
+		}
 
 		// 2c) Concat peer_key and my_key
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
@@ -549,10 +569,7 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
 
-		#pragma optimize("", off);
-				memset(concat_keys, 0, concat_keys_len);
-		#pragma optimize("", on);
-		free(concat_keys);
+		secure_free(concat_keys, concat_keys_len);
 
 		// 3) Encrypt received message with shared key
 		server_signature = decrypt_message(ciphertext, ciphertext_len, shared_key, shared_key_len, iv, server_signature_len);
@@ -561,7 +578,7 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 		}
 
 		
-		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, peer_key);
+		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr); // TODO
 		if (ret < 0) {
 			throw 5;
 		}
@@ -610,7 +627,8 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 }
 
 int ClientThread::verify_server_signature (unsigned char* signature, size_t signature_len, 
-                                           unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey)
+                                           unsigned char* cleartext, size_t cleartext_len, 
+										   EVP_PKEY* server_pubkey)
 {
 	EVP_MD_CTX* ctx = nullptr;
 
@@ -641,7 +659,7 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 			throw 2;
 		}
 
-		ret = EVP_VerifyFinal(ctx, signature, signature_len, client_pubkey);
+		ret = EVP_VerifyFinal(ctx, signature, signature_len, server_pubkey);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
 			<< "EVP_VerifyFinal returned " << ret << endl;
@@ -653,7 +671,7 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 			EVP_MD_CTX_free(ctx);
 		}
 		if (e >= 1) {
-			EVP_PKEY_free(client_pubkey);
+			EVP_PKEY_free(server_pubkey);
 		}
 		return return_value;
 	}
@@ -701,8 +719,19 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "BIO_get_mem_data returned " << ret_long << endl;
 			throw 1;
 		}
-
 		my_key_len = (uint32_t)ret_long;
+		my_key_buf = (char*)malloc(my_key_len);
+		if (!my_key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "malloc buffer for server's DH key failed" << endl;
+			throw 1;
+		}
+		ret = BIO_read(mbio, my_key_buf, my_key_len);
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_read returned " << ret << endl;
+			throw 2;
+		}
 
 
 		// 2) Prepare string < g**b, g**a > for signature
@@ -721,6 +750,18 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			throw 2;
 		}
 		peer_key_len = (uint32_t)ret_long;
+		peer_key_buf = (char*)malloc(peer_key_len);
+		if (!peer_key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "malloc buffer for client's DH key failed" << endl;
+			throw 2;
+		}
+		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_read returned " << ret << endl;
+			throw 3;
+		}
 
 		// 2b) Concat my_key and peer_key
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;

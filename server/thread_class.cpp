@@ -740,7 +740,9 @@ bool ServerThread::check_username_validity (const string& username)
  * 
  * @return 1 on success, -1 on failure
  */
-int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared_key_len, EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* iv)
+int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared_key_len, 
+                                        EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
+										unsigned char* iv)
 {
 	int ret;
 	long ret_long;
@@ -781,9 +783,20 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			<< "BIO_get_mem_data returned " << ret_long << endl;
 			throw 1;
 		}
-
 		my_key_len = (uint32_t)ret_long;
-
+		my_key_buf = (char*)malloc(my_key_len);
+		if (!my_key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "malloc buffer for server's DH key failed" << endl;
+			throw 1;
+		}
+		ret = BIO_read(mbio, my_key_buf, my_key_len);
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_read returned " << ret << endl;
+			throw 2;
+		}
+		
 
 		// 2) Prepare string < g**b, g**a > for signature
 		// 2a) Serialize peer key
@@ -801,6 +814,18 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 2;
 		}
 		peer_key_len = (uint32_t)ret_long;
+		peer_key_buf = (char*)malloc(peer_key_len);
+		if (!my_key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "malloc buffer for client's DH key failed" << endl;
+			throw 2;
+		}
+		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "BIO_read returned " << ret << endl;
+			throw 3;
+		}
 
 		// 2b) Concat my_key and peer_key
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
@@ -1134,7 +1159,17 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		if (ret_long <= 0) {
 			throw 2;
 		}
+
 		my_key_len = ret_long;
+		my_key_buf = (unsigned char*)malloc(my_key_len);
+		if (!my_key_buf) {
+			throw 2;
+		}
+
+		ret = BIO_read(mbio, my_key_buf, my_key_len);
+		if (ret < 1) {
+			throw 3;
+		}
 
 		// 2b) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
@@ -1146,7 +1181,17 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		if (ret_long <= 0) {
 			throw 3;
 		}
+
 		peer_key_len = ret_long;
+		peer_key_buf = (unsigned char*)malloc(peer_key_len);
+		if (!peer_key_buf) {
+			throw 3;
+		}
+
+		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
+		if (ret < 1) {
+			throw 4;
+		}
 
 		// 2c) Concat peer_key and my_key
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;

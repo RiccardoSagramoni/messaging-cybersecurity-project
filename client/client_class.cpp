@@ -1,15 +1,17 @@
 #include "client.h"
 
-Client::Client(const uint16_t ports) : port(ports)
+Client::Client(const uint16_t _port, const string& _name) : port(_port)
 {
-    cin >> name;
-    if (name.length() > 32 || name.length() < 2) {
-		printf("Name must be less than 30 and more than 2 characters.\n");
-	}
+    name = _name;
 }
 
 Client::~Client()
 {
+}
+
+string Client::get_username ()
+{
+    return name;
 }
 
 bool Client::configure_socket() {

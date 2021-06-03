@@ -45,9 +45,14 @@ int main(int argc, char** argv) {
 		exit(EXIT_FAILURE);
 	}
 
-    printf("Please enter your name: "); // TODO
+    string username;
+    cout << "Please enter your name: ";
+    cin >> username;
+    if (username.length() > 32 || username.length() < 2) {
+		cout << "Name must be less than 30 and more than 2 characters.";
+	}
 
-    Client client((uint16_t)port_long);
+    Client client((uint16_t)port_long, username);
     if (!client.configure_socket()) {
         perror("configure_listener_socket() failed");
 		exit(EXIT_FAILURE);

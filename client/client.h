@@ -30,7 +30,7 @@ class Client {
     const uint16_t port;
 
 public:
-    Client(const uint16_t ports);
+    Client(const uint16_t _port, const string& _name);
     ~Client();
     bool configure_socket();
     bool connects();
@@ -39,6 +39,8 @@ public:
     void str_trim_lf (char* arr, int length);
     sockaddr_in get_server_addr();
     int get_sock();
+
+    string get_username ();
 };
 
 class ClientThread {
@@ -50,9 +52,9 @@ public:
 	ClientThread(Client* cli, const int socket, const sockaddr_in addr);
 	void run();
     static int send_message (const int socket, void* msg, const uint32_t msg_len);
-	static int receive_message (const int socket, void** msg);
+	static long receive_message (const int socket, void** msg);
     DH* get_dh2048();
-    int negotiate(string& username);
+    int negotiate(const string& username);
     EVP_PKEY* generate_key_dh();
 	EVP_PKEY* get_client_private_key();
 	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& ciphertext_len);
