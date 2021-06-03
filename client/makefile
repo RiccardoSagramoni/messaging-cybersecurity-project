@@ -1,4 +1,4 @@
-LFLAGS = -Wall -pthread -lcrypto -std=c++14 -Wno-unknown-pragmas
+LFLAGS = -Wall -g -pthread -lcrypto -std=c++14 -Wno-unknown-pragmas
 CFLAGS = -c -Wall -g -std=c++14 -Wno-unknown-pragmas
 
 all: client.exe

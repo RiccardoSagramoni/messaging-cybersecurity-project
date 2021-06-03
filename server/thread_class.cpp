@@ -487,17 +487,16 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 		if (ret != 1) throw 2;
 
 	} catch (int e) {
-		if (e >= 2) {
+		if (e == 2) {
 			EVP_PKEY_CTX_free(dh_gen_ctx);
 		}
-		if (e >= 1) {
+		if (e == 1) {
 			EVP_PKEY_free(dh_params);
 		}
 
 		return nullptr;
 	}
 
-	EVP_PKEY_free(dh_params);
 	EVP_PKEY_CTX_free(dh_gen_ctx);
 	return dh_key;
 }
@@ -562,7 +561,6 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
 	EVP_PKEY_CTX_free(key_ctx);
 	if (ret != 1) { 
 		secure_free(secret, secret_len);
-
 		return nullptr;
 	}
 
