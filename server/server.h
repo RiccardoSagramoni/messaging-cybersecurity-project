@@ -122,7 +122,13 @@ class ServerThread {
 					        unsigned char* key,
 					        unsigned char* iv, size_t iv_len, 
 					        unsigned char*& ciphertext, size_t& ciphertext_len,
-					        unsigned char*& tag);
+					        unsigned char*& tag, size_t& tag_len);
+	static int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
+                            unsigned char* aad, int aad_len,
+                            unsigned char* tag,
+                            unsigned char* key,
+                            unsigned char* iv, int iv_len,
+                            unsigned char*& plaintext, size_t& plaintext_len);
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 
 	static int verify_client_signature (unsigned char* signature, size_t signature_len, 
@@ -130,7 +136,7 @@ class ServerThread {
                                         const string& username);
 	
 	static void secure_free (void* addr, size_t len);
-	unsigned char* generate_iv (EVP_CIPHER const* cipher);
+	static unsigned char* generate_iv (EVP_CIPHER const* cipher, size_t& iv_len);
 	// }
 
 
@@ -154,10 +160,9 @@ class ServerThread {
 	int STS_receive_hello_message (EVP_PKEY*& peer_key, string& username);
 	int STS_send_session_key (unsigned char* shared_key, size_t shared_key_len, 
 	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
-							  unsigned char* iv);
+							  unsigned char* iv, size_t iv_len);
 	int STS_receive_response (unsigned char* shared_key, size_t shared_key_len,
-	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key,
-							  unsigned char* iv, const string& username);
+	                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, const string& username);
 	
 	
 	// }

@@ -400,7 +400,8 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 
 	// 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
 		// 4a) Allocate and initialize IV
-		iv = generate_iv(get_symmetric_cipher());
+		size_t iv_len;
+		iv = generate_iv(get_symmetric_cipher(), iv_len);
 		if (!iv) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
 			<< "generate_iv failed" << endl;
@@ -408,7 +409,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 		}
 
 		// 4b) Send message
-		ret = STS_send_session_key(session_key, session_key_len, my_dh_key, peer_key, iv);
+		ret = STS_send_session_key(session_key, session_key_len, my_dh_key, peer_key, iv, iv_len);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
 			<< "STS_send_session_key failed" << endl;
@@ -417,7 +418,8 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 
 	// 5) Receive response message by client and check its validity
 		// Message is encrypted_k{sign_by_client{g**a,g**b}}
-		ret = STS_receive_response(session_key, session_key_len, my_dh_key, peer_key, iv, username);
+		ret = STS_receive_response(session_key, session_key_len, my_dh_key, 
+		                           peer_key, username);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
 			<< "STS_receive_response failed" << endl;
@@ -695,6 +697,185 @@ int ServerThread::STS_receive_hello_message (EVP_PKEY*& peer_key, string& userna
 	return 1;
 }
 
+
+/**
+ * Receive the messages of the third step of Station-to-Station protocol, so that
+ * the authentication pahse can be ended.
+ * The message received is: encrypted_k{sign_by_client{g**a,g**b}}
+ * 
+ * @param shared_key symmetric key established between server and client
+ * @param shared_key_len length of shared key
+ * @param my_dh_key g**b, i.e. server's part of DH key
+ * @param peer_key g**a, i.e. client's part of DH key
+ * 
+ * @return 1 on success, -1 on failure
+ */
+int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared_key_len,
+                                        EVP_PKEY* my_dh_key, EVP_PKEY* peer_key,
+										const string& username)
+{
+	int ret;
+	long ret_long;
+
+	unsigned char* iv = nullptr;
+	unsigned char* ciphertext = nullptr;
+	unsigned char* tag = nullptr;
+	unsigned char* client_signature = nullptr;
+	size_t client_signature_len = 0;
+
+	BIO* mbio = nullptr;
+	unsigned char* my_key_buf = nullptr;
+	size_t my_key_len = 0;
+	unsigned char* peer_key_buf = nullptr;
+	size_t peer_key_len = 0;
+
+	try {
+		// 1) Receive message from client
+		// 1a) IV
+		ret = receive_message(client_socket, (void**)&iv);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_receive_response: "
+			<< "receive_message iv failed" << endl;
+			throw 0;
+		}
+		size_t iv_len = ret;
+
+		// 1b) encrypted_k{sign_by_client{g**a,g**b}}
+		ret = receive_message(client_socket, (void**)&ciphertext);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_receive_response: "
+			<< "receive_message encrypted signature failed" << endl;
+			throw 1;
+		}
+		size_t ciphertext_len = ret;
+
+		// 1c) tag
+		ret = receive_message(client_socket, (void**)&tag);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_receive_response: "
+			<< "receive_message tag failed" << endl;
+			throw 2;
+		}
+		size_t tag_len = ret;
+		
+
+		// 2) Serialize g**b (server's DH key) and g**a (client's DH key).
+		// Then concatenate them.
+
+		// 2a) Serialize server's key (g**b)
+		mbio = BIO_new(BIO_s_mem());
+		if (!mbio) {
+			throw 3;
+		}
+
+		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
+		if (ret != 1) {
+			throw 4;
+		}
+
+		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
+		if (ret_long <= 0) {
+			throw 4;
+		}
+
+		my_key_len = ret_long;
+		my_key_buf = (unsigned char*)malloc(my_key_len);
+		if (!my_key_buf) {
+			throw 4;
+		}
+
+		ret = BIO_read(mbio, my_key_buf, my_key_len);
+		if (ret < 1) {
+			throw 5;
+		}
+
+		// 2b) Serialize peer key
+		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
+		if (ret != 0) {
+			throw 5;
+		}
+
+		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
+		if (ret_long <= 0) {
+			throw 5;
+		}
+
+		peer_key_len = ret_long;
+		peer_key_buf = (unsigned char*)malloc(peer_key_len);
+		if (!peer_key_buf) {
+			throw 5;
+		}
+
+		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
+		if (ret < 1) {
+			throw 6;
+		}
+
+		// 2c) Concat peer_key and my_key
+		size_t concat_keys_len = my_key_len + peer_key_len + 1;
+		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
+		if (!concat_keys) {
+			throw 6;
+		}
+
+		memcpy(concat_keys, peer_key_buf, peer_key_len);
+		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
+		concat_keys[concat_keys_len - 1] = '\0';
+
+		secure_free(concat_keys, concat_keys_len);
+
+		// 3) Encrypt received message with shared key
+		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, 
+		                  iv, iv_len, client_signature, client_signature_len);
+		if (ret < 0) {
+			throw 6;
+		}
+
+		// 4) Verify correctness of client's response to STS protocol
+		ret = verify_client_signature(client_signature, client_signature_len, 
+		                              concat_keys, concat_keys_len, username);
+		if (ret < 0) {
+			throw 7;
+		}
+
+	} catch (int e) {
+		if (e >= 7) {
+			secure_free(client_signature, client_signature_len);
+		}
+		if (e >= 6) {
+			secure_free(peer_key_buf, peer_key_len);
+		}
+		if (e >= 5) {
+			secure_free(my_key_buf, my_key_len);
+		}
+		if (e >= 4) {
+			BIO_free(mbio);
+		}
+		if (e >= 3) {
+			free(tag);
+		}
+		if (e >= 2) {
+			free(ciphertext);
+		}
+		if (e >= 1) {
+			free(iv);
+		}
+		return -1;
+	}
+
+	secure_free(client_signature, client_signature_len);
+	secure_free(peer_key_buf, peer_key_len);
+	secure_free(my_key_buf, my_key_len);
+	BIO_free(mbio);
+	free(tag);
+	free(ciphertext);
+	free(iv);
+
+	return 1;
+}
+
+
+
 /**
  * Check if specified username is valid, 
  * i.e. if its public key is installed on the server
@@ -719,6 +900,7 @@ bool ServerThread::check_username_validity (const string& username)
 	}
 }
 
+
 /**
  * Send to the connected client the second message of the STS protcol, which is composed by:
  * 	1) The part of DH key generated by the server (g**b)
@@ -738,7 +920,7 @@ bool ServerThread::check_username_validity (const string& username)
  */
 int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared_key_len, 
                                         EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
-										unsigned char* iv)
+										unsigned char* iv, size_t iv_len)
 {
 	int ret;
 	long ret_long;
@@ -749,6 +931,8 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 	uint32_t my_key_len = 0;
 	char* peer_key_buf = nullptr;
 	uint32_t peer_key_len = 0;
+	unsigned char* tag = nullptr;
+	size_t tag_len = 0;
 	unsigned char* encrypted_sign = nullptr;
 	size_t encrypted_sign_len = 0;
 
@@ -849,12 +1033,12 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		}
 
 		// 3) Encrypt signature and delete it
-		encrypted_sign = encrypt_message(signature, signature_len, shared_key, shared_key_len, 
-		                                 iv, encrypted_sign_len);
+		ret = gcm_encrypt(signature, signature_len, iv, iv_len, shared_key, iv, iv_len, 
+		                  encrypted_sign, encrypted_sign_len, tag, tag_len);
 
 		secure_free(signature, signature_len);
 
-		if (!encrypted_sign) {
+		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
 			<< "encrypt_message failed" << endl;
 			throw 3;
@@ -884,7 +1068,15 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 6;
 		}
 
-		// 5b) encrypted signature
+		// 5b) iv
+		ret = send_message(client_socket, (void*)iv, iv_len);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "send_message iv failed" << endl;
+			throw 6;
+		}
+
+		// 5c) encrypted signature
 		ret = send_message(client_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
@@ -892,19 +1084,19 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 6;
 		}
 
-		// 5c) server certificate
+		// 5d) tag
+		ret = send_message(client_socket, (void*)tag, tag_len);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			<< "send_message tag failed" << endl;
+			throw 6;
+		}
+
+		// 5e) server certificate
 		ret = send_message(client_socket, (void*)ser_certificate, ser_certificate_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
 			<< "send_message server_certificate failed" << endl;
-			throw 6;
-		}
-
-		// 5d) iv
-		ret = send_message(client_socket, (void*)iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "send_message iv failed" << endl;
 			throw 6;
 		}
 
@@ -917,6 +1109,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		}
 		if (e >= 4) {
 			secure_free(encrypted_sign, encrypted_sign_len);
+			free(tag);
 		}
 		if (e >= 3) {
 			secure_free(peer_key_buf, peer_key_len);
@@ -1118,7 +1311,7 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 							   unsigned char* key,
 							   unsigned char* iv, size_t iv_len, 
 							   unsigned char*& ciphertext, size_t& ciphertext_len,
-							   unsigned char*& tag)
+							   unsigned char*& tag, size_t& tag_len)
 {
 	int ret;
 
@@ -1190,7 +1383,8 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 		ciphertext_len += outlen;
 
 		// Get the tag
-		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag);
+		tag_len = 16;
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, tag_len, tag);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "getting the tag failed" << endl;
@@ -1236,12 +1430,12 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
  * 
  * @return 1 on success, -1 on failure 
  */
-int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
-                 unsigned char* aad, int aad_len,
-                 unsigned char* tag,
-                 unsigned char* key,
-                 unsigned char* iv, int iv_len,
-                 unsigned char*& plaintext, size_t& plaintext_len)
+int ServerThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
+                               unsigned char* aad, int aad_len,
+                               unsigned char* tag,
+                               unsigned char* key,
+                               unsigned char* iv, int iv_len,
+                               unsigned char*& plaintext, size_t& plaintext_len)
 {
 	int ret;
 
@@ -1321,153 +1515,6 @@ int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 	return 1;
 }
 
-
-/**
- * Receive the messages of the third step of Station-to-Station protocol, so that
- * the authentication pahse can be ended.
- * The message received is: encrypted_k{sign_by_client{g**a,g**b}}
- * 
- * @param shared_key symmetric key established between server and client
- * @param shared_key_len length of shared key
- * @param my_dh_key g**b, i.e. server's part of DH key
- * @param peer_key g**a, i.e. client's part of DH key
- * 
- * @return 1 on success, -1 on failure
- */
-int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared_key_len,
-                                        EVP_PKEY* my_dh_key, EVP_PKEY* peer_key,
-										unsigned char* iv, const string& username)
-{
-	int ret;
-	long ret_long;
-
-	unsigned char* ciphertext = nullptr;
-	unsigned char* client_signature = nullptr;
-	size_t client_signature_len = 0;
-
-	BIO* mbio = nullptr;
-	unsigned char* my_key_buf = nullptr;
-	size_t my_key_len = 0;
-	unsigned char* peer_key_buf = nullptr;
-	size_t peer_key_len = 0;
-
-	try {
-		// 1) Receive message from client
-		// encrypted_k{sign_by_client{g**a,g**b}}
-		ret = receive_message(client_socket, (void**)&ciphertext);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_receive_response: "
-			<< "receive_message failed" << endl;
-			throw 0;
-		}
-		size_t ciphertext_len = ret;
-		
-
-		// 2) Serialize g**b (server's DH key) and g**a (client's DH key).
-		// Then concatenate them.
-
-		// 2a) Serialize server's key (g**b)
-		mbio = BIO_new(BIO_s_mem());
-		if (!mbio) {
-			throw 1;
-		}
-
-		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
-		if (ret != 1) {
-			throw 2;
-		}
-
-		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
-		if (ret_long <= 0) {
-			throw 2;
-		}
-
-		my_key_len = ret_long;
-		my_key_buf = (unsigned char*)malloc(my_key_len);
-		if (!my_key_buf) {
-			throw 2;
-		}
-
-		ret = BIO_read(mbio, my_key_buf, my_key_len);
-		if (ret < 1) {
-			throw 3;
-		}
-
-		// 2b) Serialize peer key
-		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
-		if (ret != 0) {
-			throw 3;
-		}
-
-		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
-		if (ret_long <= 0) {
-			throw 3;
-		}
-
-		peer_key_len = ret_long;
-		peer_key_buf = (unsigned char*)malloc(peer_key_len);
-		if (!peer_key_buf) {
-			throw 3;
-		}
-
-		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
-		if (ret < 1) {
-			throw 4;
-		}
-
-		// 2c) Concat peer_key and my_key
-		size_t concat_keys_len = my_key_len + peer_key_len + 1;
-		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
-		if (!concat_keys) {
-			throw 4;
-		}
-
-		memcpy(concat_keys, peer_key_buf, peer_key_len);
-		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
-		concat_keys[concat_keys_len - 1] = '\0';
-
-		secure_free(concat_keys, concat_keys_len);
-
-		// 3) Encrypt received message with shared key
-		client_signature = decrypt_message(ciphertext, ciphertext_len, shared_key, shared_key_len, iv, client_signature_len);
-		if (!client_signature) {
-			throw 4;
-		}
-
-		// 4) Verify correctness of client's response to STS protocol
-		ret = verify_client_signature(client_signature, client_signature_len, 
-		                              concat_keys, concat_keys_len, username);
-		if (ret < 0) {
-			throw 5;
-		}
-
-	} catch (int e) {
-		if (e >= 5) {
-			secure_free(client_signature, client_signature_len);
-		}
-		if (e >= 4) {
-			secure_free(peer_key_buf, peer_key_len);
-		}
-		if (e >= 3) {
-			secure_free(my_key_buf, my_key_len);
-		}
-		if (e >= 2) {
-			BIO_free(mbio);
-		}
-		if (e >= 1) {
-			free(ciphertext);
-		}
-		return -1;
-	}
-
-	secure_free(client_signature, client_signature_len);
-	secure_free(peer_key_buf, peer_key_len);
-	secure_free(my_key_buf, my_key_len);
-	BIO_free(mbio);
-	free(ciphertext);
-
-	return 1;
-}
 
 /**
  * Verify if a signature made by a client is correct
@@ -1563,17 +1610,19 @@ void ServerThread::secure_free (void* addr, size_t len)
  * 
  * @return IV on success, NULL on failure
  */
-unsigned char* ServerThread::generate_iv (EVP_CIPHER const* cipher)
+unsigned char* ServerThread::generate_iv (EVP_CIPHER const* cipher, size_t& iv_len)
 {
+	iv_len = EVP_CIPHER_iv_length(cipher);
+
 	// Allocate IV
-	unsigned char* iv = (unsigned char*)malloc(EVP_CIPHER_iv_length(cipher));
+	unsigned char* iv = (unsigned char*)malloc(iv_len);
 	if (!iv) {
 		cerr << "[Thread " << this_thread::get_id() << "] generate_iv: "
 		<< "malloc iv failed" << endl;
 		return nullptr;
 	}
 	
-	int ret = RAND_bytes(iv, EVP_CIPHER_iv_length(cipher));
+	int ret = RAND_bytes(iv, iv_len);
 	if (ret != 1) {
 		cerr << "[Thread " << this_thread::get_id() << "] generate_iv: "
 		<< "RAND_bytes failed" << endl;
