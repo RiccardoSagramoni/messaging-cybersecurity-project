@@ -304,7 +304,7 @@ int ClientThread::negotiate(const string& username) {
 
 		//build store, add certificate, add crl and check validity
 		ret = build_store_cert_and_check(cert, crl_serv, cert_serv);
-		if (ret <=0) {
+		if (ret !=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error build store and check validity" << endl;
 			throw 4;
@@ -321,7 +321,7 @@ int ClientThread::negotiate(const string& username) {
 
 		
 		//decrypt and verify server signature
-		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag, plain_sig, plain_sig_len_len);
+		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error verifying server sign" << endl;
@@ -329,7 +329,7 @@ int ClientThread::negotiate(const string& username) {
 		}
 
 		//crypt sign and send it
-		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len, iv);
+		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len, iv, iv_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error sending sign" << endl;
@@ -619,7 +619,7 @@ const EVP_CIPHER* ClientThread::get_symmetric_cipher ()
 
 // decrypt and verification sign
 int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,
-    EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len, unsigned char* tag, unsigned char*& plaintext_sig, size_t& plaintext_sig_len) {
+    EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len, unsigned char* tag) {
 	int ret;
 	long ret_long;
 
@@ -713,7 +713,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		secure_free(concat_keys, concat_keys_len);
 
 		// 3) Decrypt received message with shared key
-		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, plaintext_sig, plaintext_sig_len);
+		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, server_signature, server_signature_len);
 		if (ret!=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
 			<< "error decryption" << endl;
@@ -721,7 +721,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		}
 
 		// verify server sig
-		ret = verify_server_signature(plaintext_sig, plaintext_sig_len, concat_keys, concat_keys_len, nullptr); // TODO
+		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
 			<< "error verification sign" << endl;
@@ -831,7 +831,7 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 
 
 // for encrypt and send sign
-int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv) {
+int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len) {
 	int ret;
 	long ret_long;
 
@@ -843,6 +843,8 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 	uint32_t peer_key_len = 0;
 	unsigned char* encrypted_sign = nullptr;
 	size_t encrypted_sign_len = 0;
+	unsigned char* tag = nullptr;
+	size_t tag_len = 0;
 
 
 	try {
@@ -940,9 +942,12 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		}
 
 		// 3) Encrypt signature and delete it
-		encrypted_sign = encrypt_message(signature, signature_len, shared_key, shared_key_len, 
-		                                 iv, encrypted_sign_len);
-		
+		ret = gcm_encrypt(signature, signature_len, iv, iv_len, shared_key, iv, iv_len, encrypted_sign, encrypted_sign_len, tag, tag_len);
+		if (ret !=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			<< "failed to crypt" << endl;
+			throw 3;
+		}
 		#pragma optimize("", off)
 			memset(signature, 0, signature_len);
 		#pragma optmize("", on)
@@ -1417,11 +1422,11 @@ int ClientThread::build_store_cert_and_check(X509* cert, X509_CRL* crl, X509* ce
 
 
 int ClientThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
-                 unsigned char* aad, int aad_len,
-                 unsigned char* tag,
-                 unsigned char* key,
-                 unsigned char* iv, int iv_len,
-                 unsigned char*& plaintext, size_t& plaintext_len)
+                               unsigned char* aad, int aad_len,
+                               unsigned char* tag,
+                               unsigned char* key,
+                               unsigned char* iv, int iv_len,
+                               unsigned char*& plaintext, size_t& plaintext_len)
 {
 	int ret;
 
@@ -1445,7 +1450,7 @@ int ClientThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 			throw 1;
 		}
 
-		ret = EVP_DecryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		ret = EVP_DecryptInit(ctx, get_authenticated_encryption_cipher(), key, iv);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
 			<< "EVP_DecryptInit failed" << endl;
@@ -1512,7 +1517,7 @@ int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 							   unsigned char* key,
 							   unsigned char* iv, size_t iv_len, 
 							   unsigned char*& ciphertext, size_t& ciphertext_len,
-							   unsigned char*& tag)
+							   unsigned char*& tag, size_t& tag_len)
 {
 	int ret;
 
@@ -1520,7 +1525,7 @@ int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 	
 	try {
 		// Allocate ciphertext
-		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(EVP_aes_128_gcm()));
+		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(get_authenticated_encryption_cipher()));
 		if (!ciphertext) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "malloc ciphertext failed" << endl;
@@ -1545,7 +1550,7 @@ int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 		}
 
 		// Initialise the encryption operation.
-		ret = EVP_EncryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		ret = EVP_EncryptInit(ctx, get_authenticated_encryption_cipher(), key, iv);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "EVP_EncryptInit returned " << ret << endl;
@@ -1584,7 +1589,8 @@ int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 		ciphertext_len += outlen;
 
 		// Get the tag
-		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag);
+		tag_len = 16;
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, tag_len, tag);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "getting the tag failed" << endl;
@@ -1612,4 +1618,10 @@ int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 	free(ciphertext);
 
 	return 1;
+}
+
+
+const EVP_CIPHER* ClientThread::get_authenticated_encryption_cipher ()
+{
+	return EVP_aes_128_gcm();
 }
