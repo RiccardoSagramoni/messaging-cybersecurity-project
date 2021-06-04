@@ -145,9 +145,22 @@ void ClientThread::run()
 
 
 
-
+//negotiation of key and autentication with server
 int ClientThread::negotiate(const string& username) {
     int ret;
+	X509* cert=nullptr;
+	X509* cert_serv=nullptr;
+	X509_CRL* crl_serv=nullptr;
+	unsigned char* ser_certificate = nullptr;
+	size_t ser_certificate_len = 0;
+	unsigned char* iv = nullptr;
+    char* username_c = nullptr;
+	BIO* mbio = nullptr;
+	char* pubkey_buf = nullptr;
+	EVP_PKEY* public_key_from_cert = nullptr;
+
+	unsigned char* session_key = nullptr;
+	size_t session_key_len = 0;
     EVP_PKEY* peer_key = nullptr;
 	//sig
 	unsigned char* ciphertext = nullptr;
@@ -155,84 +168,149 @@ int ClientThread::negotiate(const string& username) {
     //generate g^a
     EVP_PKEY* my_dh_key = generate_key_dh();
 	if (!my_dh_key) {
-		cerr << "negotiate(...): generate_key_dh failed" << endl;
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+		<< "error generate key" << endl;
 		return -1;
 	}
 
-	X509* cert=nullptr;
-	unsigned char* ser_certificate = nullptr;
-	size_t ser_certificate_len = 0;
-	unsigned char* iv = nullptr;
-    char* username_c = nullptr;
-	BIO* mbio = nullptr;
-	char* pubkey_buf = nullptr;
-
-	unsigned char* session_key = nullptr;
-	size_t session_key_len = 0;
-
-	
 	try {
+		//malloc username
 		username_c = (char*)malloc(username.length() + 1);
 		if (!username_c) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error malloc username" << endl;
 			throw 0;
 		}
     	strcpy(username_c, username.c_str());
-
+		//send username to the server
     	ret = send_message(main_server_socket, (void*) username_c, (uint32_t) strlen(username_c));
 		if (ret < 1) {
-			// TODO cerr
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error send username" << endl;
 			throw 1;
 		}
-
+		//serialize my_dh_key
     	mbio = BIO_new(BIO_s_mem());
     	if (!mbio) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error bio_new" << endl;
 			throw 1;
 		}
 
 		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error write bio" << endl;
 			throw 2;
 		}
 		
 		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
-		if (ret_long <= 0) throw 2;
-
+		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error get mem bio pub key" << endl;
+			throw 2;
+		}
 		uint32_t pubkey_size = (uint32_t)ret_long;
+		//send g^a
 		ret = send_message(main_server_socket, (void*)pubkey_buf, pubkey_size);
-		if (ret < 1) throw 2;
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error sending pub key" << endl;
+			throw 2;
+		}
+		
 
-		// Second step protocol
+		// Second step protocol (receive public key from server)
 		ret = receive_from_server_pub_key(peer_key);
 		if (ret < 0) throw 2;
 
-
+		//derive session key
 		session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
 		session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
-		if (!session_key) throw 2;
-
-
+		if (!session_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error derive session key" << endl;
+			throw 2;
+		}
+		//receive crypto sign
 		ret = receive_message(main_server_socket, (void**)&ciphertext);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error receive crypto sign" << endl;
 			throw 3;
 		}
 
 		ciphertext_len = ret;
 
-
+		//receive certificate of the server
 		ret = receive_message(main_server_socket, (void**)&ser_certificate);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error receive certificate" << endl;
 			throw 4;
 		}
 		ser_certificate_len = ret;
-
-
-		ret = receive_message(main_server_socket, (void**)&iv);
-		if (ret <= 0) {
-			throw 5;
+		cert = deseryalize_cert(ser_certificate, ser_certificate_len);
+		if (cert == NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error deserialize certificate" << endl;
+			throw 4;
 		}
 
-		ret = get_sig(ciphertext, ciphertext_len, my_dh_key, peer_key, session_key, session_key_len, iv);
+
+		//get certificate from file
+		cert_serv = get_server_certificate();
+		if (cert_serv == NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error server certificate" << endl;
+			throw 4;
+		}
+
+		//get crl from file
+		crl_serv = get_crl();
+		if (crl_serv == NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error crl" << endl;
+			throw 4;
+		}
+
+		//build store, add certificate, add crl and check validity
+		ret = build_store_cert_and_check(cert, crl_serv, cert_serv);
+		if (ret <=0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error build store and check validity" << endl;
+			throw 4;
+		}
+		//extract public key from certificate
+		public_key_from_cert = X509_get_pubkey(cert);
+		if (public_key_from_cert == NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error exract pub key from cert" << endl;
+			throw 4;
+		}
+
+
+
+		//receive iv (initialization vector)
+		ret = receive_message(main_server_socket, (void**)&iv);
 		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error receive iv" << endl;
+			throw 5;
+		}
+		//decrypt and verify server signature
+		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error verifying server sign" << endl;
+			throw 6;
+		}
+
+		//crypt sign and send it
+		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len, iv);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error sending sign" << endl;
 			throw 6;
 		}
 
@@ -294,8 +372,10 @@ EVP_PKEY* ClientThread::generate_key_dh ()
 	try {
 		// Allocate DH params p and g
 		dh_params = EVP_PKEY_new();
-		if (!dh_params) throw 0;
-
+		if (!dh_params) {
+			cerr << "Thread " << this_thread::get_id() << " failed [generate_key_dh]:\n";
+			throw 0;
+		}
 		// Calculate DH params
 		DH* temp_dh_params = get_dh2048();
 		ret  = EVP_PKEY_set1_DH(dh_params, temp_dh_params);
@@ -327,6 +407,10 @@ EVP_PKEY* ClientThread::generate_key_dh ()
 	return dh_key;
 }
 
+
+
+
+// get session key
 unsigned char* ClientThread::derive_session_key (EVP_PKEY* my_dh_key, 
                                                  EVP_PKEY* peer_key, 
                                                  size_t key_len)
@@ -336,8 +420,8 @@ unsigned char* ClientThread::derive_session_key (EVP_PKEY* my_dh_key,
 	// Create a new context for deriving DH key
 	EVP_PKEY_CTX* key_ctx = EVP_PKEY_CTX_new(my_dh_key, nullptr);
 	if (!key_ctx) {
-		cerr << "Thread " << this_thread::get_id() << " failed [derive_session_key]:\n";
-		ERR_print_errors_fp(stderr);
+		cerr << "[Thread " << this_thread::get_id() << "] derive_session_key: "
+		<< "error ctx" << endl;
 		return nullptr;
 	}
 
@@ -381,7 +465,6 @@ unsigned char* ClientThread::derive_session_key (EVP_PKEY* my_dh_key,
 
 		return nullptr;
 	}
-
 	//
 	// Hash the shared secret with SHA-256 in order to get a shared secret key
 	//
@@ -454,29 +537,45 @@ unsigned char* ClientThread::derive_session_key (EVP_PKEY* my_dh_key,
 	free(hashed_key);
 	EVP_MD_CTX_free(md_ctx);
 
+	
 	return key;
 }
 
 
 
-
+// receive public key from server
 int ClientThread::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
     int ret_int;
 	long ret_long;
     char* key = nullptr;
 	ret_long = receive_message(main_server_socket, (void**)&key);
 	if (ret_long <= 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] receive_from_server_pub_key: "
+		<< "error receive message" << endl;
 		return -1;
 	}
 	size_t key_len = ret_long;
 	BIO* mem_bio = nullptr;
 	try {
 		mem_bio = BIO_new(BIO_s_mem());
-		if (!mem_bio) throw 0;
+		if (!mem_bio) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_from_server_pub_key: "
+			<< "error bio_new" << endl;
+			throw 0;
+		}
+		
 		ret_int = BIO_write(mem_bio, key, key_len);
-		if (ret_int <= 0) throw 1;
+		if (ret_int <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_from_server_pub_key: "
+			<< "error bio_write" << endl;
+			throw 1;
+		}
 		peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
-		if (!peer_key) throw 1;
+		if (!peer_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_from_server_pub_key: "
+			<< "error pem read" << endl;
+			throw 1;
+		}
 	} catch (int e) {
 		if (e >= 1) {
 			BIO_free(mem_bio);
@@ -496,8 +595,8 @@ const EVP_CIPHER* ClientThread::get_symmetric_cipher ()
 
 
 
-
-int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,
+// decrypt and verification sign
+int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,
     EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv) {
 	int ret;
 	long ret_long;
@@ -516,45 +615,63 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 		// 2a) Serialize server's key (g**b)
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "BIO_new failed" << endl;
 			throw 1;
 		}
 
 		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
 		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error BIO_write pubkey" << endl;
 			throw 2;
 		}
 
 		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
 		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error bio get meme data" << endl;
 			throw 2;
 		}
 		my_key_len = ret_long;
 		my_key_buf = (unsigned char*)malloc(my_key_len);
 		if (!my_key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error malloc client key" << endl;
 			throw 2;
 		}
 		ret = BIO_read(mbio, my_key_buf, my_key_len);
 		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error bio read" << endl;
 			throw 3;
 		}
 
 		// 2b) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
 		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error serialize perr key" << endl;
 			throw 3;
 		}
 
 		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
 		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error bio get meme data peer key" << endl;
 			throw 3;
 		}
 		peer_key_len = ret_long;
 		peer_key_buf = (unsigned char*)malloc(peer_key_len);
 		if (!peer_key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error malloc peer key" << endl;
 			throw 3;
 		}
 		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
 		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error bio read peer" << endl;
 			throw 4;
 		}
 
@@ -562,6 +679,8 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error concatenation of keys" << endl;
 			throw 4;
 		}
 
@@ -571,17 +690,21 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 
 		secure_free(concat_keys, concat_keys_len);
 
-		// 3) Encrypt received message with shared key
+		// 3) Decrypt received message with shared key
 		server_signature = decrypt_message(ciphertext, ciphertext_len, shared_key, shared_key_len, iv, server_signature_len);
 		if (!server_signature) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error decryption" << endl;
 			throw 4;
 		}
 
-		/*
-		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr);
+		// verify server sig
+		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr); // TODO
 		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
+			<< "error verification sign" << endl;
 			throw 5;
-		}*/
+		}
 
 	} catch (int e) {
 		if (e >= 5) {
@@ -626,6 +749,9 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 	return 1;
 }
 
+
+
+//for verify server signature
 int ClientThread::verify_server_signature (unsigned char* signature, size_t signature_len, 
                                            unsigned char* cleartext, size_t cleartext_len, 
 										   EVP_PKEY* server_pubkey)
@@ -640,28 +766,28 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 		// 2) Verify signature
 		ctx = EVP_MD_CTX_new();
 		if (!ctx) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
 			<< "EVP_MD_CTX_new returned NULL" << endl;
 			throw 1;
 		}
 
 		ret = EVP_VerifyInit(ctx, EVP_sha256());
 		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
 			<< "EVP_VerifyInit returned " << ret << endl;
 			throw 2;
 		}
 
 		ret = EVP_VerifyUpdate(ctx, cleartext, cleartext_len);
 		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
 			<< "EVP_VerifyUpdate returned " << ret << endl;
 			throw 2;
 		}
 
 		ret = EVP_VerifyFinal(ctx, signature, signature_len, server_pubkey);
 		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
+			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
 			<< "EVP_VerifyFinal returned " << ret << endl;
 			throw 2;
 		}
@@ -682,7 +808,7 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 
 
 
-
+// for encrypt and send sign
 int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv) {
 	int ret;
 	long ret_long;
@@ -698,67 +824,67 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 
 
 	try {
-		// 1) Serialize server's key (g**a)
+		// 1) Serialize server's key (g**b)
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "BIO_new failed" << endl;
 			throw 0;
 		}
 
 		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
 		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
 			throw 1;
 		}
 
 		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
 		if (ret_long <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "BIO_get_mem_data returned " << ret_long << endl;
 			throw 1;
 		}
 		my_key_len = (uint32_t)ret_long;
 		my_key_buf = (char*)malloc(my_key_len);
 		if (!my_key_buf) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "malloc buffer for server's DH key failed" << endl;
 			throw 1;
 		}
 		ret = BIO_read(mbio, my_key_buf, my_key_len);
 		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "BIO_read returned " << ret << endl;
 			throw 2;
 		}
 
 
-		// 2) Prepare string < g**a, g**b > for signature
+		// 2) Prepare string < g**b, g**a > for signature
 		// 2a) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
 		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
 			throw 2;
 		}
 
 		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
 		if (ret_long <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "BIO_get_mem_data returned " << ret_long << endl;
 			throw 2;
 		}
 		peer_key_len = (uint32_t)ret_long;
 		peer_key_buf = (char*)malloc(peer_key_len);
 		if (!peer_key_buf) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "malloc buffer for client's DH key failed" << endl;
 			throw 2;
 		}
 		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
 		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "BIO_read returned " << ret << endl;
 			throw 3;
 		}
@@ -767,7 +893,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "malloc concat_keys failed" << endl;
 			throw 3;
 		}
@@ -786,7 +912,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		free(concat_keys);
 
 		if (!signature) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "sign_message failed" << endl;
 			throw 3;
 		}
@@ -801,28 +927,28 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		free(signature);
 
 		if (!encrypted_sign) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "encrypt_message failed" << endl;
 			throw 3;
 		}
 	
 
-		// 5b) encrypted signature
+		// 5b) send crypted signature
 		ret = send_message(main_server_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message encrypted_signature" << endl;
-			throw 6;
+			throw 3;
 		}
 
 
 		// 5d) iv
-		ret = send_message(main_server_socket, (void*)iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
+		/*ret = send_message(main_server_socket, (void*)iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
 			<< "send_message iv failed" << endl;
 			throw 6;
-		}
+		}*/
 
 	} catch (int e) {
 		if (e >= 4) {
@@ -871,7 +997,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 
 
 
-
+// for sign message 
 unsigned char* ClientThread::sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len)
 {
 	int ret;
@@ -880,24 +1006,56 @@ unsigned char* ClientThread::sign_message(unsigned char* msg, size_t msg_len, un
 	unsigned char* signature = nullptr;
 	
 	try {
+		//get private key
 		prvkey = get_client_private_key();
-		if (!prvkey) throw 0;
+		if (!prvkey) {
+			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
+			<< "error getting private key" << endl;
+			throw 0;
+		}
 		
+		//new ctx
 		ctx= EVP_MD_CTX_new();
-		if (!ctx) throw 1;
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
+			<< "Error ctx" << endl;
+			throw 1;
+		}
 
+		//initialize sign
 		ret = EVP_SignInit(ctx, EVP_sha256());
-		if (ret != 1) throw 2;
-
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
+			<< "error initialize sign" << endl;
+			throw 2;
+		}
+		
+		//sign message
 		ret = EVP_SignUpdate(ctx, msg, msg_len);
-		if (ret != 1) throw 2;
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
+			<< "error update sign" << endl;
+			throw 2;
+		}
 
+
+		// malloc sign and get size
 		signature_len = EVP_PKEY_size(prvkey);
 		signature = (unsigned char*)malloc(signature_len);
-		if (!signature) throw 2;
+		if (!signature) {
+			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
+			<< "error malloc sign" << endl;
+			throw 2;
+		}
 
+
+		// finalize sign
 		ret = EVP_SignFinal(ctx, signature, &signature_len, prvkey);
-		if (ret != 1) throw 3;
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
+			<< "error finalize sign" << endl;
+			throw 3;
+		}
 
 	} catch (int e) {
 		if (e >= 3) {
@@ -918,6 +1076,9 @@ unsigned char* ClientThread::sign_message(unsigned char* msg, size_t msg_len, un
 	return signature;
 }
 
+
+
+//get private key
 EVP_PKEY* ClientThread::get_client_private_key ()
 {
 	// Load my private key:
@@ -944,7 +1105,7 @@ EVP_PKEY* ClientThread::get_client_private_key ()
 
 
 
-
+// for encrypt message (using iv)
 unsigned char* ClientThread::encrypt_message (unsigned char* msg, size_t msg_len, 
                                               unsigned char* key, size_t key_len, 
                                               unsigned char* iv, size_t& ciphertext_len)
@@ -1014,6 +1175,7 @@ unsigned char* ClientThread::encrypt_message (unsigned char* msg, size_t msg_len
 
 
 
+// for decrypting ciphertext (using iv)
 
 unsigned char* ClientThread::decrypt_message (unsigned char* ciphertext, size_t ciphertext_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& plainlen) {
 	unsigned char* plaintext;
@@ -1021,24 +1183,28 @@ unsigned char* ClientThread::decrypt_message (unsigned char* ciphertext, size_t 
 	int outlen;
 	EVP_CIPHER_CTX* ctx;
 	try {
+		//malloc of plaintext
 		plaintext = (unsigned char*)malloc(ciphertext_len);
 		if (!plaintext) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
 			<< "malloc plaintext failed" << endl;
 			throw 0;
 		}
+		//create new ctx ciphertext
 		ctx= EVP_CIPHER_CTX_new();
 		if (!ctx) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
 			<< "EVP_CIPHER_CTX_new failed" << endl;
 			throw 1;
 		}
+		// initialize decryption context
 		ret = EVP_DecryptInit(ctx, get_symmetric_cipher(), key, iv);  
 		if (ret!=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
 			<< "EVP_DecryptionUpdate failed" << endl;
 			throw 2;
 		}
+		// start decryption
 		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
 		if (ret!=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
@@ -1046,6 +1212,7 @@ unsigned char* ClientThread::decrypt_message (unsigned char* ciphertext, size_t 
 			throw 2;
 		}
 		plainlen=outlen;
+		// Finalize decryption
 		ret = EVP_DecryptFinal(ctx, plaintext + plainlen, &outlen);
 		if (ret!=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
@@ -1067,4 +1234,360 @@ unsigned char* ClientThread::decrypt_message (unsigned char* ciphertext, size_t 
 	EVP_CIPHER_CTX_free(ctx);
 
 	return plaintext;
+}
+
+
+
+
+// for deseryalize certificate 
+X509* ClientThread::deseryalize_cert(unsigned char* ser_certificate, size_t ser_certificate_len) {
+	X509* cert = nullptr;
+	//Deseryalize certificate
+	cert = d2i_X509(NULL, (const unsigned char**)& ser_certificate, ser_certificate_len);
+	if (!cert) {
+		return NULL;
+	}
+	return cert;
+}
+
+
+
+
+
+// get crl from file 
+X509_CRL* ClientThread::get_crl() {
+	FILE* file = nullptr;
+	X509_CRL* crl = nullptr;
+// try to open the file
+	try {
+		file = fopen(filename_crl.c_str(), "r");
+		if (!file) {
+			cerr << "[Thread " << this_thread::get_id() << "] get_crl: "
+			<< "cannot open file " << filename_crl << endl;
+			throw 0;
+		}
+
+		crl = PEM_read_X509_CRL(file, nullptr, nullptr, nullptr);
+		if (!crl) {
+			cerr << "[Thread " << this_thread::get_id() << "] get_crl: "
+			<< "cannot read crle " << endl;
+			throw 1;
+		}
+
+	} catch (int e) {
+		if (e >= 1) {
+			fclose(file);
+		}
+		return nullptr;
+	}
+
+	fclose(file);
+	return crl;
+}
+
+
+
+
+// for get certificate from file
+X509* ClientThread::get_server_certificate ()
+{
+	
+	FILE* file = nullptr;
+	X509* cert = nullptr;
+// try to open file
+	try {
+		file = fopen(filename_certificate.c_str(), "r");
+		if (!file) {
+			cerr << "[Thread " << this_thread::get_id() << "] get_server_certificate: "
+			<< "cannot open file " << filename_certificate << endl;
+			throw 0;
+		}
+// get the certificate
+		cert = PEM_read_X509(file, nullptr, nullptr, nullptr);
+		if (!cert) {
+			cerr << "[Thread " << this_thread::get_id() << "] get_server_certificate: "
+			<< "cannot read X509 certificate " << endl;
+			throw 1;
+		}
+
+	} catch (int e) {
+		if (e >= 1) {
+			fclose(file);
+		}
+		return nullptr;
+	}
+
+	fclose(file);
+	return cert;
+}
+
+
+
+
+
+
+// for build the store for certificate and check validity of some certificate
+
+int ClientThread::build_store_cert_and_check(X509* cert, X509_CRL* crl, X509* cert_to_ver) {
+	int ret=0;
+	X509_STORE* store = nullptr;
+	X509_STORE_CTX* ctx = nullptr;
+	//allocate store
+	try {
+		if ((store = X509_STORE_new())==NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "cannot create store " << endl;
+			throw 0;
+		}
+		// add cert to the store
+		ret = X509_STORE_add_cert(store, cert);
+		if (ret<1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "cannot add certificate to store " << endl;
+			throw 1;
+		}
+		// add crl
+		ret = X509_STORE_add_crl(store, crl);
+		if (ret<1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "cannot add crl to store " << endl;
+			throw 1;
+		}
+		// set the flag
+		ret = X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK);
+		if (ret<1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "cannot set flag " << endl;
+			throw 1;
+		}
+		//check validity
+		if ((ctx = X509_STORE_CTX_new())==NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "cannot allocate ctx " << endl;
+			throw 2;
+		}
+		ret = X509_STORE_CTX_init(ctx, store, cert_to_ver, NULL);
+		if (ret<1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "Error in ctx init " << endl;
+			throw 2;
+		}
+		ret = X509_verify_cert(ctx);
+		if (ret!=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			<< "Error verify cert " << endl;
+			return -1;
+		}
+	} catch (int e) {
+		if (e >= 2) {
+			X509_STORE_CTX_free(ctx);;
+		}
+		if (e >= 1) {
+			X509_STORE_free(store);
+		}
+		return -1;
+	}
+	X509_STORE_CTX_free(ctx);
+	X509_STORE_free(store);
+	return 1;
+}
+
+
+
+int ClientThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
+                 unsigned char* aad, int aad_len,
+                 unsigned char* tag,
+                 unsigned char* key,
+                 unsigned char* iv, int iv_len,
+                 unsigned char*& plaintext, size_t& plaintext_len)
+{
+	int ret;
+
+	EVP_CIPHER_CTX* ctx = nullptr;
+	int outlen = 0;
+
+	try {
+		// Allocate plaintext
+		plaintext = (unsigned char*)malloc(ciphertext_len);
+		if (!plaintext) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "malloc plaintext failed" << endl;
+			throw 0;
+		}
+		
+		// Create and initialise the context
+		ctx = EVP_CIPHER_CTX_new();
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_CIPHER_CTX_bew failed" << endl;
+			throw 1;
+		}
+
+		ret = EVP_DecryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptInit failed" << endl;
+			throw 2;
+		}
+
+		// Introduce AAD data in context
+		ret = EVP_DecryptUpdate(ctx, NULL, &outlen, aad, aad_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptUpdate AAD failed" << endl;
+			throw 2;
+		}
+
+		//Provide the message to be decrypted, and obtain the plaintext output.
+		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptUpdate plaintext failed" << endl;
+			throw 2;
+		}
+		plaintext_len = outlen;
+
+		// Set expected tag value
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, tag);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_CIPHER_CTX_ctrl failed" << endl;
+			throw 2;			
+		}
+		// Finalise the decryption. A positive return value indicates success,
+		// anything else is a failure (i.e. the plaintext is not trustworthy)
+		ret = EVP_DecryptFinal(ctx, plaintext + outlen, &outlen);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptFinal returned " << ret << endl;
+			throw 2;
+		}
+		plaintext_len += outlen;
+
+	} catch (int e) {
+		if (e >= 2) {
+			EVP_CIPHER_CTX_free(ctx);
+		}
+		if (e >= 1) {
+			free(plaintext);
+		}
+		return -1;
+	}
+
+	// Clean up
+	EVP_CIPHER_CTX_free(ctx);
+	return 1;
+}
+
+
+
+
+
+
+
+int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
+							   unsigned char* aad, size_t aad_len, 
+							   unsigned char* key,
+							   unsigned char* iv, size_t iv_len, 
+							   unsigned char*& ciphertext, size_t& ciphertext_len,
+							   unsigned char*& tag)
+{
+	int ret;
+
+	EVP_CIPHER_CTX* ctx;
+	
+	try {
+		// Allocate ciphertext
+		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(EVP_aes_128_gcm()));
+		if (!ciphertext) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "malloc ciphertext failed" << endl;
+			throw 0;
+		}
+
+		// Allocate tag
+		tag = (unsigned char*)malloc(TAG_SIZE);
+		if (!tag) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "malloc tag failed" << endl;
+			throw 1;
+		}
+
+		// Create and initialize the context
+		ctx = EVP_CIPHER_CTX_new();
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_CIPHER_CTX_new failed" << endl;
+			ERR_print_errors_fp(stderr);
+			throw 3;
+		}
+
+		// Initialise the encryption operation.
+		ret = EVP_EncryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptInit returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+		int outlen;
+		// Insert AAD header
+		ret = EVP_EncryptUpdate(ctx, nullptr, &outlen, aad, aad_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptUpdate AAD returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+		// Encrypt plaintext
+		ret = EVP_EncryptUpdate(ctx, ciphertext, &outlen, plaintext, plaintext_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptUpdate ciphertext returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+		ciphertext_len = outlen;
+
+		// Finalize Encryption
+		ret = EVP_EncryptFinal(ctx, ciphertext + outlen, &outlen);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptFinal returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+		ciphertext_len += outlen;
+
+		// Get the tag
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "getting the tag failed" << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+	} catch (int e) {
+		if (e >= 4) {
+			EVP_CIPHER_CTX_free(ctx);
+		}
+		if (e >= 2) {
+			free(tag);
+		}
+		if (e >= 1) {
+			free(ciphertext);
+		}
+		return -1;
+	}
+
+	// Clean up
+	EVP_CIPHER_CTX_free(ctx);
+	free(iv);
+	free(tag);
+	free(ciphertext);
+
+	return 1;
 }
