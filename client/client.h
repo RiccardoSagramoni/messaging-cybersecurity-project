@@ -65,13 +65,13 @@ public:
 	unsigned char* decrypt_message(unsigned char* chipertext, size_t chipertext_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& plainlen);
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 	int send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv);
-	int decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv);
+	int decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len, unsigned char* tag, unsigned char*& plaintext_sig, size_t& plaintext_sig_len);
 	int verify_server_signature(unsigned char* signature, size_t signature_len, unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey);
     unsigned char* derive_session_key(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
-    X509* get_CA_certificate();
+    X509* get_server_certificate();
     X509_CRL* get_crl();
-    int build_store_certificate_and_check_validity(X509* cert, X509_CRL* crl, X509* cert_to_ver);
-    X509* deserialize_cert(unsigned char* ser_certificate, size_t ser_certificate_len);
+    int build_store_cert_and_check(X509* cert, X509_CRL* crl, X509* cert_to_ver);
+    X509* deseryalize_cert(unsigned char* ser_certificate, size_t ser_certificate_len);
     void print_command();
     void secure_free (void* addr, size_t len);
     int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,unsigned char* aad, int aad_len,unsigned char* tag,unsigned char* key,unsigned char* iv, int iv_len,unsigned char*& plaintext, size_t& plaintext_len);
