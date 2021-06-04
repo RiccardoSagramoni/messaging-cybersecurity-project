@@ -400,18 +400,14 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 
 	// 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
 		// 4a) Allocate and initialize IV
-		iv = (unsigned char*)malloc(EVP_CIPHER_iv_length(get_symmetric_cipher()));
+		iv = generate_iv(get_symmetric_cipher());
 		if (!iv) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
-			<< "malloc iv failed" << endl;
+			<< "generate_iv failed" << endl;
 			throw 3;
 		}
-		ret = RAND_bytes(iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
-			<< "RAND_bytes failed" << endl;
-			throw 4;
-		}
+
+		// 4b) Send message
 		ret = STS_send_session_key(session_key, session_key_len, my_dh_key, peer_key, iv);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
@@ -1025,7 +1021,7 @@ unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len
 }
 
 /**
- * 
+ * // TODO
  * @param ciphertext 
  * @param ciphertext_len 
  * @param key 
@@ -1099,6 +1095,232 @@ unsigned char* ServerThread::decrypt_message (unsigned char* ciphertext, size_t 
 
 	return plaintext;
 }
+
+
+/**
+ * Encrypt a message with AES128-GCM auth-encryption mode
+ * 
+ * @param plaintext message to encrypt
+ * @param plaintext_len length of plaintext
+ * @param aad Additional Authenticated Data. It's the authenticated header in clear
+ * @param aad_len length of AAD
+ * @param key symmetric key for AES
+ * @param iv initialization vector for AES.
+ * @param iv_len length of iv
+ * @param ciphertext generated encrypted message. Allocated by this function
+ * @param ciphertext_len length of message
+ * @param tag generated MAC of AAD+plaintext. Allocated by this function.
+ * 
+ * @return 1 on success, -1 on failure  
+ */
+int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
+							   unsigned char* aad, size_t aad_len, 
+							   unsigned char* key,
+							   unsigned char* iv, size_t iv_len, 
+							   unsigned char*& ciphertext, size_t& ciphertext_len,
+							   unsigned char*& tag)
+{
+	int ret;
+
+	EVP_CIPHER_CTX* ctx;
+	
+	try {
+		// Allocate ciphertext
+		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(EVP_aes_128_gcm()));
+		if (!ciphertext) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "malloc ciphertext failed" << endl;
+			throw 0;
+		}
+
+		// Allocate tag
+		tag = (unsigned char*)malloc(TAG_SIZE);
+		if (!tag) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "malloc tag failed" << endl;
+			throw 1;
+		}
+
+		// Create and initialize the context
+		ctx = EVP_CIPHER_CTX_new();
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_CIPHER_CTX_new failed" << endl;
+			ERR_print_errors_fp(stderr);
+			throw 3;
+		}
+
+		// Initialise the encryption operation.
+		ret = EVP_EncryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptInit returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+		int outlen;
+		// Insert AAD header
+		ret = EVP_EncryptUpdate(ctx, nullptr, &outlen, aad, aad_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptUpdate AAD returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+		// Encrypt plaintext
+		ret = EVP_EncryptUpdate(ctx, ciphertext, &outlen, plaintext, plaintext_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptUpdate ciphertext returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+		ciphertext_len = outlen;
+
+		// Finalize Encryption
+		ret = EVP_EncryptFinal(ctx, ciphertext + outlen, &outlen);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "EVP_EncryptFinal returned " << ret << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+		ciphertext_len += outlen;
+
+		// Get the tag
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
+			<< "getting the tag failed" << endl;
+			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+	} catch (int e) {
+		if (e >= 4) {
+			EVP_CIPHER_CTX_free(ctx);
+		}
+		if (e >= 2) {
+			free(tag);
+		}
+		if (e >= 1) {
+			free(ciphertext);
+		}
+		return -1;
+	}
+
+	// Clean up
+	EVP_CIPHER_CTX_free(ctx);
+	free(iv);
+	free(tag);
+	free(ciphertext);
+
+	return 1;
+}
+
+/**
+ * Decrypt a message encrypted with AES128-GCM auth-encryption mode
+ * 
+ * @param ciphertext message to decrypt
+ * @param ciphertext_len length of ciphertext
+ * @param aad Additional Authenticated Data. It's the authenticated header in clear
+ * @param aad_len length of AAD
+ * @param tag MAC of the AAD+plaintext
+ * @param key symmetric key for AES
+ * @param iv initialization vector for AES
+ * @param iv_len iv length
+ * @param plaintext pointer to the decrypted message. The memory for the plaintext will be allocated by this function.
+ * @param plaintext_len length of generated plaintext
+ * 
+ * @return 1 on success, -1 on failure 
+ */
+int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
+                 unsigned char* aad, int aad_len,
+                 unsigned char* tag,
+                 unsigned char* key,
+                 unsigned char* iv, int iv_len,
+                 unsigned char*& plaintext, size_t& plaintext_len)
+{
+	int ret;
+
+	EVP_CIPHER_CTX* ctx = nullptr;
+	int outlen = 0;
+
+	try {
+		// Allocate plaintext
+		plaintext = (unsigned char*)malloc(ciphertext_len);
+		if (!plaintext) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "malloc plaintext failed" << endl;
+			throw 0;
+		}
+		
+		// Create and initialise the context
+		ctx = EVP_CIPHER_CTX_new();
+		if (!ctx) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_CIPHER_CTX_bew failed" << endl;
+			throw 1;
+		}
+
+		ret = EVP_DecryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptInit failed" << endl;
+			throw 2;
+		}
+
+		// Introduce AAD data in context
+		ret = EVP_DecryptUpdate(ctx, NULL, &outlen, aad, aad_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptUpdate AAD failed" << endl;
+			throw 2;
+		}
+
+		//Provide the message to be decrypted, and obtain the plaintext output.
+		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptUpdate plaintext failed" << endl;
+			throw 2;
+		}
+		plaintext_len = outlen;
+
+		// Set expected tag value
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, tag);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_CIPHER_CTX_ctrl failed" << endl;
+			throw 2;			
+		}
+		// Finalise the decryption. A positive return value indicates success,
+		// anything else is a failure (i.e. the plaintext is not trustworthy)
+		ret = EVP_DecryptFinal(ctx, plaintext + outlen, &outlen);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
+			<< "EVP_DecryptFinal returned " << ret << endl;
+			throw 2;
+		}
+		plaintext_len += outlen;
+
+	} catch (int e) {
+		if (e >= 2) {
+			EVP_CIPHER_CTX_free(ctx);
+		}
+		if (e >= 1) {
+			free(plaintext);
+		}
+		return -1;
+	}
+
+	// Clean up
+	EVP_CIPHER_CTX_free(ctx);
+	return 1;
+}
+
 
 /**
  * Receive the messages of the third step of Station-to-Station protocol, so that
@@ -1332,6 +1554,36 @@ void ServerThread::secure_free (void* addr, size_t len)
 	#pragma optimize("", on);
 
 	free(addr);
+}
+
+/**
+ * Generated initialization vector for a symmetric cipher
+ * 
+ * @param cipher symmetric cipher
+ * 
+ * @return IV on success, NULL on failure
+ */
+unsigned char* ServerThread::generate_iv (EVP_CIPHER const* cipher)
+{
+	// Allocate IV
+	unsigned char* iv = (unsigned char*)malloc(EVP_CIPHER_iv_length(cipher));
+	if (!iv) {
+		cerr << "[Thread " << this_thread::get_id() << "] generate_iv: "
+		<< "malloc iv failed" << endl;
+		return nullptr;
+	}
+	
+	int ret = RAND_bytes(iv, EVP_CIPHER_iv_length(cipher));
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] generate_iv: "
+		<< "RAND_bytes failed" << endl;
+		ERR_print_errors_fp(stderr);
+		
+		free(iv);
+		return nullptr;
+	}
+
+	return iv;
 }
 
 /**

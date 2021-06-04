@@ -108,22 +108,29 @@ class ServerThread {
 	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
 	
 	EVP_PKEY* get_server_private_key ();
-	X509* get_server_certificate();
+	X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
 
-	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, 
-	                                unsigned char* key, size_t key_len, 
-									unsigned char* iv, size_t& ciphertext_len);
-	unsigned char* decrypt_message (unsigned char* ciphertext, size_t ciphertext_len, 
-	                                unsigned char* key, size_t key_len, 
-									unsigned char* iv, size_t& msg_len);
+	static unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, 
+	                                       unsigned char* key, size_t key_len, 
+                                           unsigned char* iv, size_t& ciphertext_len);
+	static unsigned char* decrypt_message (unsigned char* ciphertext, size_t ciphertext_len, 
+	                                       unsigned char* key, size_t key_len, 
+                                           unsigned char* iv, size_t& msg_len);
+	static int gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
+					        unsigned char* aad, size_t aad_len, 
+					        unsigned char* key,
+					        unsigned char* iv, size_t iv_len, 
+					        unsigned char*& ciphertext, size_t& ciphertext_len,
+					        unsigned char*& tag);
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 
-	int verify_client_signature (unsigned char* signature, size_t signature_len, 
-                                 unsigned char* cleartext, size_t cleartext_len,
-								 const string& username);
+	static int verify_client_signature (unsigned char* signature, size_t signature_len, 
+                                        unsigned char* cleartext, size_t cleartext_len,
+                                        const string& username);
 	
 	static void secure_free (void* addr, size_t len);
+	unsigned char* generate_iv (EVP_CIPHER const* cipher);
 	// }
 
 
@@ -172,3 +179,5 @@ public:
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
 // }
+
+#define TAG_SIZE 16

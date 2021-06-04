@@ -577,11 +577,11 @@ int ClientThread::get_sig(unsigned char* ciphertext, size_t ciphertext_len, EVP_
 			throw 4;
 		}
 
-		
-		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr); // TODO
+		/*
+		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr);
 		if (ret < 0) {
 			throw 5;
-		}
+		}*/
 
 	} catch (int e) {
 		if (e >= 5) {
@@ -698,7 +698,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 
 
 	try {
-		// 1) Serialize server's key (g**b)
+		// 1) Serialize server's key (g**a)
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
@@ -734,7 +734,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		}
 
 
-		// 2) Prepare string < g**b, g**a > for signature
+		// 2) Prepare string < g**a, g**b > for signature
 		// 2a) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
 		if (ret != 1) {
