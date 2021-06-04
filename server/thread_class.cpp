@@ -194,8 +194,8 @@ void ServerThread::run()
 	size_t key_len = 0;
 	unsigned char* key = authenticate_and_negotiate_key(username, key_len);
 	if(!key) {
-		cerr << "[Thread " << this_thread::get_id() << "] run: : "
-			<< "authenticate_and_negotiate_key failed."
+		cerr << "[Thread " << this_thread::get_id() << "] run: "
+			<< "authenticate_and_negotiate_key failed. "
 			<< "Closing this thread and socket " << client_socket << endl;
 		close(client_socket);
 		return;
@@ -1058,6 +1058,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 5;
 		}
 		ser_certificate_len = ret;
+		X509_print_fp(stdout, certificate); // TODO remove
 
 		// 5) SEND MESSAGES TO CLIENT
 		// 5a) g**b
@@ -1368,6 +1369,7 @@ int ServerThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
  * @param cleartext text that is supposed to be signed
  * @param cleartext_len length of cleartext
  * @param username username of the client that signed the cleartext
+ * 
  * @return 1 on success, -1 if the verification process failes, -2 if the public key of the user isn't installed on the server
  */
 int ServerThread::verify_client_signature (unsigned char* signature, size_t signature_len, 
