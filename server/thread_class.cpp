@@ -362,7 +362,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 	EVP_PKEY* peer_key = nullptr;
 	EVP_PKEY* my_dh_key = nullptr;
 	unsigned char* session_key = nullptr;
-	size_t session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
+	size_t session_key_len = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
 	unsigned char* iv = nullptr;
 
 	try {
@@ -401,7 +401,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 	// 4) Send g**b || encrypted_k{sign of g**b,g**a} || server's certificate
 		// 4a) Allocate and initialize IV
 		size_t iv_len;
-		iv = generate_iv(get_symmetric_cipher(), iv_len);
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
 		if (!iv) {
 			cerr << "[Thread " << this_thread::get_id() << "] authenticate_and_negotiate_key: "
 			<< "generate_iv failed" << endl;
@@ -632,9 +632,9 @@ unsigned char* ServerThread::derive_session_key (EVP_PKEY* my_dh_key,
  * 
  * @return structure which describes chosen cipher
  */
-const EVP_CIPHER* ServerThread::get_symmetric_cipher ()
+const EVP_CIPHER* ServerThread::get_authenticated_encryption_cipher ()
 {
-	return EVP_aes_128_cbc();
+	return EVP_aes_128_gcm();
 }
 
 /**
@@ -1135,162 +1135,6 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 }
 
 /**
- * Encrypt a message with AES-128 in CBC mode, using the specified parameters
- * 
- * @param msg pointer to the message to encrypt
- * @param msg_len length of the message to encrypt
- * @param key pointer to the key
- * @param key_len length of the key
- * @param iv initialization vector for AES cipher (CBC mode)
- * @param ciphertext_len the length of the final ciphertext will be returned through this reference
- * 
- * @return address to the ciphertext on success, NULL on failure
- */
-unsigned char* ServerThread::encrypt_message (unsigned char* msg, size_t msg_len, 
-                                              unsigned char* key, size_t key_len, 
-                                              unsigned char* iv, size_t& ciphertext_len)
-{
-	int ret;
-	EVP_CIPHER_CTX* ctx = nullptr;
-	unsigned char* ciphertext = nullptr;
-
-	try {
-		// Allocate ciphertext
-		ciphertext = (unsigned char*)malloc(msg_len + EVP_CIPHER_block_size(get_symmetric_cipher()));
-		if (!ciphertext) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "malloc ciphertext failed" << endl;
-			throw 0;
-		}
-		
-		// Allocate context for encryption
-		ctx = EVP_CIPHER_CTX_new();
-		if (!ctx) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_CIPHER_CTX_new failed" << endl;
-			throw 1;
-		}
-
-		// Initialize encryption context
-		ret = EVP_EncryptInit(ctx, get_symmetric_cipher(), key, iv);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_EncryptIniti failed" << endl;
-			throw 2;
-		}
-
-		// Encrypt message
-		int outl;
-		ret = EVP_EncryptUpdate(ctx, ciphertext, &outl, msg, msg_len);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_EncryptionUpdate failed" << endl;
-			throw 2;
-		}
-
-		// Finalize encryption
-		ciphertext_len = outl;
-		ret = EVP_EncryptFinal(ctx, ciphertext + ciphertext_len, &outl);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_EncryptionUpdate failed" << endl;
-			throw 2;
-		}
-
-		ciphertext_len += outl;
-		
-	} catch (int e) {
-		if (e >= 2) {
-			EVP_CIPHER_CTX_free(ctx);
-		}
-		if (e >= 1) {
-			free(ciphertext);
-		}
-		return nullptr;
-	}
-
-	EVP_CIPHER_CTX_free(ctx);
-	return ciphertext;
-}
-
-/**
- * // TODO
- * @param ciphertext 
- * @param ciphertext_len 
- * @param key 
- * @param key_len 
- * @param iv 
- * @param msg_len 
- * @return unsigned* 
- */
-unsigned char* ServerThread::decrypt_message (unsigned char* ciphertext, size_t ciphertext_len,       
-                                              unsigned char* key, size_t key_len, 
-											  unsigned char* iv, size_t& msg_len) 
-{
-	
-	int ret;
-	unsigned char* plaintext = nullptr;
-	EVP_CIPHER_CTX* ctx = nullptr;
-	
-	try {
-		plaintext = (unsigned char*)malloc(ciphertext_len);
-		if (!plaintext) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "malloc plaintext failed" << endl;
-			throw 0;
-		}
-
-		ctx = EVP_CIPHER_CTX_new();
-		if (!ctx) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_CIPHER_CTX_new failed" << endl;
-			throw 1;
-		}
-
-		ret = EVP_DecryptInit(ctx, get_symmetric_cipher(), key, iv); 
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_DecryptionUpdate failed" << endl;
-			throw 2;
-		}
-
-		int outlen = 0;
-
-		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_DecryptionUpdate failed" << endl;
-			throw 2;
-		}
-
-		msg_len = outlen;
-
-		ret = EVP_DecryptFinal(ctx, plaintext + msg_len, &outlen);
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_DecryptionFinal failed" << endl;
-			throw 2;
-		}
-
-		msg_len += outlen;
-
-	} catch (int e) {
-		if (e >= 2) {
-			EVP_CIPHER_CTX_free(ctx);
-		}
-		if (e >= 1) {
-			free(plaintext);
-		}
-		return nullptr;
-	}
-
-	EVP_CIPHER_CTX_free(ctx);
-
-	return plaintext;
-}
-
-
-/**
  * Encrypt a message with AES128-GCM auth-encryption mode
  * 
  * @param plaintext message to encrypt
@@ -1319,7 +1163,7 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 	
 	try {
 		// Allocate ciphertext
-		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(EVP_aes_128_gcm()));
+		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(get_authenticated_encryption_cipher()));
 		if (!ciphertext) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "malloc ciphertext failed" << endl;
@@ -1344,7 +1188,7 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 		}
 
 		// Initialise the encryption operation.
-		ret = EVP_EncryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		ret = EVP_EncryptInit(ctx, get_authenticated_encryption_cipher(), key, iv);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "EVP_EncryptInit returned " << ret << endl;
@@ -1459,7 +1303,7 @@ int ServerThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 			throw 1;
 		}
 
-		ret = EVP_DecryptInit(ctx, EVP_aes_128_gcm(), key, iv);
+		ret = EVP_DecryptInit(ctx, get_authenticated_encryption_cipher(), key, iv);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
 			<< "EVP_DecryptInit failed" << endl;

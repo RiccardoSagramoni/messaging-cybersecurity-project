@@ -149,8 +149,8 @@ void ClientThread::run()
 int ClientThread::negotiate(const string& username) {
     int ret;
 	X509* cert=nullptr;
-	X509* cert_serv=nullptr;
-	X509_CRL* crl_serv=nullptr;
+	X509* cert_CA=nullptr;
+	X509_CRL* crl_CA=nullptr;
 	unsigned char* ser_certificate = nullptr;
 	size_t ser_certificate_len = 0;
 	unsigned char* iv = nullptr;
@@ -250,7 +250,7 @@ int ClientThread::negotiate(const string& username) {
 			throw 4;
 		}
 		ser_certificate_len = ret;
-		cert = deseryalize_cert(ser_certificate, ser_certificate_len);
+		cert = deserialize_cert(ser_certificate, ser_certificate_len);
 		if (cert == NULL) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error deserialize certificate" << endl;
@@ -259,23 +259,23 @@ int ClientThread::negotiate(const string& username) {
 
 
 		//get certificate from file
-		cert_serv = get_server_certificate();
-		if (cert_serv == NULL) {
+		cert_CA = get_CA_certificate();
+		if (cert_CA == NULL) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error server certificate" << endl;
 			throw 4;
 		}
 
 		//get crl from file
-		crl_serv = get_crl();
-		if (crl_serv == NULL) {
+		crl_CA = get_crl();
+		if (crl_CA == NULL) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error crl" << endl;
 			throw 4;
 		}
 
 		//build store, add certificate, add crl and check validity
-		ret = build_store_cert_and_check(cert, crl_serv, cert_serv);
+		ret = build_store_certificate_and_check_validity(cert, crl_CA, cert_CA);
 		if (ret <=0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error build store and check validity" << endl;
@@ -1240,7 +1240,7 @@ unsigned char* ClientThread::decrypt_message (unsigned char* ciphertext, size_t 
 
 
 // for deseryalize certificate 
-X509* ClientThread::deseryalize_cert(unsigned char* ser_certificate, size_t ser_certificate_len) {
+X509* ClientThread::deserialize_cert(unsigned char* ser_certificate, size_t ser_certificate_len) {
 	X509* cert = nullptr;
 	//Deseryalize certificate
 	cert = d2i_X509(NULL, (const unsigned char**)& ser_certificate, ser_certificate_len);
@@ -1289,7 +1289,7 @@ X509_CRL* ClientThread::get_crl() {
 
 
 // for get certificate from file
-X509* ClientThread::get_server_certificate ()
+X509* ClientThread::get_CA_certificate ()
 {
 	
 	FILE* file = nullptr;
@@ -1298,14 +1298,14 @@ X509* ClientThread::get_server_certificate ()
 	try {
 		file = fopen(filename_certificate.c_str(), "r");
 		if (!file) {
-			cerr << "[Thread " << this_thread::get_id() << "] get_server_certificate: "
+			cerr << "[Thread " << this_thread::get_id() << "] get_CA_certificate: "
 			<< "cannot open file " << filename_certificate << endl;
 			throw 0;
 		}
 // get the certificate
 		cert = PEM_read_X509(file, nullptr, nullptr, nullptr);
 		if (!cert) {
-			cerr << "[Thread " << this_thread::get_id() << "] get_server_certificate: "
+			cerr << "[Thread " << this_thread::get_id() << "] get_CA_certificate: "
 			<< "cannot read X509 certificate " << endl;
 			throw 1;
 		}
@@ -1328,56 +1328,60 @@ X509* ClientThread::get_server_certificate ()
 
 // for build the store for certificate and check validity of some certificate
 
-int ClientThread::build_store_cert_and_check(X509* cert, X509_CRL* crl, X509* cert_to_ver) {
+int ClientThread::build_store_certificate_and_check_validity(X509* cert, X509_CRL* crl, X509* cert_to_ver) {
 	int ret=0;
 	X509_STORE* store = nullptr;
 	X509_STORE_CTX* ctx = nullptr;
 	//allocate store
 	try {
-		if ((store = X509_STORE_new())==NULL) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+		if ((store = X509_STORE_new()) == NULL) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "cannot create store " << endl;
 			throw 0;
 		}
 		// add cert to the store
 		ret = X509_STORE_add_cert(store, cert);
-		if (ret<1) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "cannot add certificate to store " << endl;
 			throw 1;
 		}
+		
 		// add crl
 		ret = X509_STORE_add_crl(store, crl);
-		if (ret<1) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "cannot add crl to store " << endl;
 			throw 1;
 		}
+
 		// set the flag
 		ret = X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK);
-		if (ret<1) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "cannot set flag " << endl;
 			throw 1;
 		}
+
 		//check validity
 		if ((ctx = X509_STORE_CTX_new())==NULL) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "cannot allocate ctx " << endl;
 			throw 2;
 		}
 		ret = X509_STORE_CTX_init(ctx, store, cert_to_ver, NULL);
-		if (ret<1) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "Error in ctx init " << endl;
 			throw 2;
 		}
 		ret = X509_verify_cert(ctx);
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] build_store_cert_and_check: "
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] build_store_certificate_and_check_validity: "
 			<< "Error verify cert " << endl;
-			return -1;
+			throw 2;
 		}
+
 	} catch (int e) {
 		if (e >= 2) {
 			X509_STORE_CTX_free(ctx);;

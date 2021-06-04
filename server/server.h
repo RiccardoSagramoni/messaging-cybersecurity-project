@@ -101,7 +101,7 @@ class ServerThread {
 
 	// Fundamental methods for cryptography {
 	
-	static const EVP_CIPHER* get_symmetric_cipher ();
+	static const EVP_CIPHER* get_authenticated_encryption_cipher ();
 	
 	static DH* get_dh2048();
 	static EVP_PKEY* generate_key_dh ();
@@ -111,12 +111,6 @@ class ServerThread {
 	X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
 
-	static unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, 
-	                                       unsigned char* key, size_t key_len, 
-                                           unsigned char* iv, size_t& ciphertext_len);
-	static unsigned char* decrypt_message (unsigned char* ciphertext, size_t ciphertext_len, 
-	                                       unsigned char* key, size_t key_len, 
-                                           unsigned char* iv, size_t& msg_len);
 	static int gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 					        unsigned char* aad, size_t aad_len, 
 					        unsigned char* key,
