@@ -111,10 +111,10 @@ class ServerThread {
 	X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
 
-	static int gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
-					        unsigned char* aad, size_t aad_len, 
+	static int gcm_encrypt (unsigned char* plaintext, int plaintext_len,
+					        unsigned char* aad, int aad_len, 
 					        unsigned char* key,
-					        unsigned char* iv, size_t iv_len, 
+					        unsigned char* iv, int iv_len, 
 					        unsigned char*& ciphertext, size_t& ciphertext_len,
 					        unsigned char*& tag, size_t& tag_len);
 	static int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,

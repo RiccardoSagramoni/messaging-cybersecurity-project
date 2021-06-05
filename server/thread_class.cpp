@@ -1034,7 +1034,9 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		// 3) Encrypt signature and delete it
 		ret = gcm_encrypt(signature, signature_len, iv, iv_len, shared_key, iv, iv_len, 
 		                  encrypted_sign, encrypted_sign_len, tag, tag_len);
-
+		for (size_t i = 0; i < signature_len; i++) {
+			printf("%u, ", signature[i]);
+		} printf("\n\n");
 		secure_free(signature, signature_len);
 
 		if (ret < 0) {
@@ -1099,6 +1101,26 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 6;
 		}
 
+		for (size_t i = 0; i < iv_len; i++) {
+			printf("%u, ", iv[i]);
+		} printf("\n");
+
+		for (size_t i = 0; i < encrypted_sign_len; i++) {
+			printf("%u, ", encrypted_sign[i]);
+		} printf("\n");
+
+		for (size_t i = 0; i < tag_len; i++) {
+			printf("%u, ", tag[i]);
+		} printf("\n");
+
+		for (size_t i = 0; i < shared_key_len; i++) {
+			printf("%u, ", shared_key[i]);
+		} printf("\n");
+		
+		
+		
+		fflush(stdout);
+
 	} catch (int e) {
 		if (e >= 6) {
 			OPENSSL_free(ser_certificate);
@@ -1149,10 +1171,10 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
  * 
  * @return 1 on success, -1 on failure  
  */
-int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
-							   unsigned char* aad, size_t aad_len, 
+int ServerThread::gcm_encrypt (unsigned char* plaintext, int plaintext_len,
+							   unsigned char* aad, int aad_len, 
 							   unsigned char* key,
-							   unsigned char* iv, size_t iv_len, 
+							   unsigned char* iv, int iv_len, 
 							   unsigned char*& ciphertext, size_t& ciphertext_len,
 							   unsigned char*& tag, size_t& tag_len)
 {
@@ -1176,6 +1198,7 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 			<< "malloc tag failed" << endl;
 			throw 1;
 		}
+		tag_len = TAG_SIZE;
 
 		// Create and initialize the context
 		ctx = EVP_CIPHER_CTX_new();
@@ -1197,7 +1220,7 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 
 		int outlen;
 		// Insert AAD header
-		ret = EVP_EncryptUpdate(ctx, nullptr, &outlen, aad, aad_len);
+		ret = EVP_EncryptUpdate(ctx, NULL, &outlen, aad, aad_len);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "EVP_EncryptUpdate AAD returned " << ret << endl;
@@ -1226,8 +1249,7 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 		ciphertext_len += outlen;
 
 		// Get the tag
-		tag_len = 16;
-		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, tag_len, tag);
+		ret = EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, TAG_SIZE, tag);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "getting the tag failed" << endl;
@@ -1250,9 +1272,6 @@ int ServerThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 
 	// Clean up
 	EVP_CIPHER_CTX_free(ctx);
-	free(iv);
-	free(tag);
-	free(ciphertext);
 
 	return 1;
 }
@@ -1317,7 +1336,7 @@ int ServerThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 			throw 2;
 		}
 
-		//Provide the message to be decrypted, and obtain the plaintext output.
+		// Provide the message to be decrypted, and obtain the plaintext output.
 		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
@@ -1333,6 +1352,7 @@ int ServerThread::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 			<< "EVP_CIPHER_CTX_ctrl failed" << endl;
 			throw 2;			
 		}
+
 		// Finalise the decryption. A positive return value indicates success,
 		// anything else is a failure (i.e. the plaintext is not trustworthy)
 		ret = EVP_DecryptFinal(ctx, plaintext + outlen, &outlen);

@@ -72,7 +72,7 @@ public:
     void print_command();
     void secure_free (void* addr, size_t len);
     int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,unsigned char* aad, int aad_len,unsigned char* tag,unsigned char* key,unsigned char* iv, int iv_len,unsigned char*& plaintext, size_t& plaintext_len);
-    int gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,unsigned char* aad, size_t aad_len, unsigned char* key,unsigned char* iv, size_t iv_len, unsigned char*& ciphertext, size_t& ciphertext_len,unsigned char*& tag, size_t& tag_len);
+    int gcm_encrypt (unsigned char* plaintext, int plaintext_len, unsigned char* aad, int aad_len, unsigned char* key, unsigned char* iv, int iv_len, unsigned char*& ciphertext, size_t& ciphertext_len,unsigned char*& tag, size_t& tag_len);
     const EVP_CIPHER* get_authenticated_encryption_cipher();
     unsigned char* generate_iv(EVP_CIPHER const* cipher, size_t& iv_len);
 };
