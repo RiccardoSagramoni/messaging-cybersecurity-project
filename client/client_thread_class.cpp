@@ -171,6 +171,7 @@ int ClientThread::negotiate(const string& username)
 	size_t ciphertext_len = 0;
 	unsigned char* plain_sig = nullptr;
 	size_t plain_sig_len_len = 0;
+
     //generate g^a
     EVP_PKEY* my_dh_key = generate_key_dh();
 	if (!my_dh_key) {
@@ -287,8 +288,6 @@ int ClientThread::negotiate(const string& username)
 			throw 4;
 		}
 
-		X509_print_fp(stdout, cert); // TODO remove
-
 		//get certificate from file
 		cert_CA = get_CA_certificate();
 		if (cert_CA == NULL) {
@@ -306,12 +305,13 @@ int ClientThread::negotiate(const string& username)
 		}
 
 		// build store, add certificate, add crl and check validity
-		ret = build_store_certificate_and_validate_check(cert, crl_CA, cert_CA);
+		ret = build_store_certificate_and_validate_check(cert_CA, crl_CA, cert);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error build store and check validity" << endl;
 			throw 4;
 		}
+
 		//extract public key from certificate
 		public_key_from_cert = X509_get_pubkey(cert);
 		if (public_key_from_cert == NULL) {
@@ -319,9 +319,6 @@ int ClientThread::negotiate(const string& username)
 			<< "error exract pub key from cert" << endl;
 			throw 4;
 		}
-
-
-
 		
 		//decrypt and verify server signature
 		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag);
@@ -621,8 +618,11 @@ const EVP_CIPHER* ClientThread::get_symmetric_cipher ()
 
 
 // decrypt and verification sign
-int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,
-    EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len, unsigned char* tag) {
+int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len,
+                                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
+                                          unsigned char* shared_key, size_t shared_key_len, 
+                                          unsigned char* iv, size_t iv_len, unsigned char* tag) 
+{
 	int ret;
 	long ret_long;
 
@@ -634,6 +634,8 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 	size_t my_key_len = 0;
 	unsigned char* peer_key_buf = nullptr;
 	size_t peer_key_len = 0;
+	unsigned char* concat_keys = nullptr;
+	size_t concat_keys_len = 0;
 
 	try {
 
@@ -701,8 +703,8 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		}
 
 		// 2c) Concat peer_key and my_key
-		size_t concat_keys_len = my_key_len + peer_key_len + 1;
-		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
+		concat_keys_len = my_key_len + peer_key_len + 1;
+		concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
 			<< "error concatenation of keys" << endl;
@@ -713,14 +715,12 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
 
-		secure_free(concat_keys, concat_keys_len);
-
 		// 3) Decrypt received message with shared key
 		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, server_signature, server_signature_len);
 		if (ret!=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
 			<< "error decryption" << endl;
-			throw 4;
+			throw 5;
 		}
 
 		// verify server sig
@@ -728,27 +728,21 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
 			<< "error verification sign" << endl;
-			throw 5;
+			throw 6;
 		}
 
 	} catch (int e) {
+		if (e >= 6) {
+			secure_free(server_signature, server_signature_len);
+		}
 		if (e >= 5) {
-			#pragma optimize("", off);
-				memset(server_signature, 0, server_signature_len);
-			#pragma optimize("", on);
-			free(server_signature);
+			secure_free(concat_keys, concat_keys_len);
 		}
 		if (e >= 4) {
-			#pragma optimize("", off);
-				memset(peer_key_buf, 0, peer_key_len);
-			#pragma optimize("", on);
-			free(peer_key_buf);
+			secure_free(peer_key_buf, peer_key_len);
 		}
 		if (e >= 3) {
-			#pragma optimize("", off);
-				memset(my_key_buf, 0, my_key_len);
-			#pragma optimize("", on);
-			free(my_key_buf);
+			secure_free(my_key_buf, my_key_len);
 		}
 		if (e >= 2) {
 			BIO_free(mbio);
@@ -759,15 +753,10 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		return -1;
 	}
 
-	#pragma optimize("", off);
-		memset(server_signature, 0, server_signature_len);
-		memset(peer_key_buf, 0, peer_key_len);
-		memset(my_key_buf, 0, my_key_len);
-	#pragma optimize("", on);
-
-	free(server_signature);
-	free(peer_key_buf);
-	free(my_key_buf);
+	secure_free(server_signature, server_signature_len);
+	secure_free(concat_keys, concat_keys_len);
+	secure_free(peer_key_buf, peer_key_len);
+	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
 	free(ciphertext);
 

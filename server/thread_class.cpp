@@ -756,7 +756,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 			<< "receive_message tag failed" << endl;
 			throw 2;
 		}
-		size_t tag_len = ret;
 		
 
 		// 2) Serialize g**b (server's DH key) and g**a (client's DH key).
@@ -1058,7 +1057,6 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 5;
 		}
 		ser_certificate_len = ret;
-		X509_print_fp(stdout, certificate); // TODO remove
 
 		// 5) SEND MESSAGES TO CLIENT
 		// 5a) g**b
