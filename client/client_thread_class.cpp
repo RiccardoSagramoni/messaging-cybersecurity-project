@@ -232,15 +232,13 @@ int ClientThread::negotiate(const string& username)
 		if (ret < 0) throw 2;
 
 		//derive session key
-		session_key_len = EVP_CIPHER_key_length(get_symmetric_cipher());
+		session_key_len = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
 		session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
 		if (!session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error derive session key" << endl;
 			throw 2;
 		}
-
-
 
 
 		//receive iv (initialization vector)
@@ -610,9 +608,9 @@ int ClientThread::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
     return 1;
 }
 
-const EVP_CIPHER* ClientThread::get_symmetric_cipher ()
+const EVP_CIPHER* ClientThread::get_authentication_encryption_cipher ()
 {
-	return EVP_aes_128_cbc();
+	return EVP_aes_128_gcm();
 }
 
 
@@ -1138,142 +1136,6 @@ EVP_PKEY* ClientThread::get_client_private_key ()
 	}
 
 	return prvkey;
-}
-
-
-
-
-
-
-// for encrypt message (using iv)
-unsigned char* ClientThread::encrypt_message (unsigned char* msg, size_t msg_len, 
-                                              unsigned char* key, size_t key_len, 
-                                              unsigned char* iv, size_t& ciphertext_len)
-{
-	int ret;
-	EVP_CIPHER_CTX* ctx = nullptr;
-	unsigned char* ciphertext = nullptr;
-
-	try {
-		// Allocate ciphertext
-		ciphertext = (unsigned char*)malloc(msg_len + EVP_CIPHER_block_size(get_symmetric_cipher()));
-		if (!ciphertext) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "malloc ciphertext failed" << endl;
-			throw 0;
-		}
-		
-		// Allocate context for encryption
-		ctx = EVP_CIPHER_CTX_new();
-		if (!ctx) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_CIPHER_CTX_new failed" << endl;
-			throw 2;
-		}
-
-		// Initialize encryption context
-		ret = EVP_EncryptInit(ctx, get_symmetric_cipher(), key, iv);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_EncryptIniti failed" << endl;
-			throw 2;
-		}
-
-		// Encrypt message
-		int outl;
-		ret = EVP_EncryptUpdate(ctx, ciphertext, &outl, msg, msg_len);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_EncryptionUpdate failed" << endl;
-			throw 2;
-		}
-
-		// Finalize encryption
-		ciphertext_len = outl;
-		ret = EVP_EncryptFinal(ctx, ciphertext + ciphertext_len, &outl);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] encrypt_message: "
-			<< "EVP_EncryptionUpdate failed" << endl;
-			throw 2;
-		}
-
-		ciphertext_len += outl;
-		
-	} catch (int e) {
-		if (e >= 2) {
-			EVP_CIPHER_CTX_free(ctx);
-		}
-		if (e >= 1) {
-			free(ciphertext);
-		}
-		return nullptr;
-	}
-
-	EVP_CIPHER_CTX_free(ctx);
-	return ciphertext;
-}
-
-
-
-// for decrypting ciphertext (using iv)
-
-unsigned char* ClientThread::decrypt_message (unsigned char* ciphertext, size_t ciphertext_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& plainlen) {
-	unsigned char* plaintext;
-	int ret;
-	int outlen;
-	EVP_CIPHER_CTX* ctx;
-	try {
-		//malloc of plaintext
-		plaintext = (unsigned char*)malloc(ciphertext_len);
-		if (!plaintext) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "malloc plaintext failed" << endl;
-			throw 0;
-		}
-		//create new ctx ciphertext
-		ctx= EVP_CIPHER_CTX_new();
-		if (!ctx) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_CIPHER_CTX_new failed" << endl;
-			throw 1;
-		}
-		// initialize decryption context
-		ret = EVP_DecryptInit(ctx, get_symmetric_cipher(), key, iv);  
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_DecryptionUpdate failed" << endl;
-			throw 2;
-		}
-		// start decryption
-		ret = EVP_DecryptUpdate(ctx, plaintext, &outlen, ciphertext, ciphertext_len);
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_DecryptionUpdate failed" << endl;
-			throw 2;
-		}
-		plainlen=outlen;
-		// Finalize decryption
-		ret = EVP_DecryptFinal(ctx, plaintext + plainlen, &outlen);
-		if (ret!=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] decrypt_message: "
-			<< "EVP_DecryptionFinal failed" << endl;
-			throw 2;
-		}
-		plainlen+= outlen;
-	} catch (int e) {
-		if (e >= 2) {
-			EVP_CIPHER_CTX_free(ctx);
-		}
-		if (e >= 1) {
-			free(plaintext);
-		}
-		return nullptr;
-	}
-
-
-	EVP_CIPHER_CTX_free(ctx);
-
-	return plaintext;
 }
 
 

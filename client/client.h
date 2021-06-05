@@ -59,10 +59,8 @@ public:
     int negotiate(const string& username);
     EVP_PKEY* generate_key_dh();
 	EVP_PKEY* get_client_private_key();
-	unsigned char* encrypt_message (unsigned char* msg, size_t msg_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& ciphertext_len);
     int receive_from_server_pub_key(EVP_PKEY*& peer_key);
-    const EVP_CIPHER* get_symmetric_cipher();
-	unsigned char* decrypt_message(unsigned char* chipertext, size_t chipertext_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& plainlen);
+    const EVP_CIPHER* get_authentication_encryption_cipher();
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
 	int send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len);
 	int decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len, unsigned char* tag);
