@@ -64,7 +64,7 @@ public:
     const EVP_CIPHER* get_symmetric_cipher();
 	unsigned char* decrypt_message(unsigned char* chipertext, size_t chipertext_len, unsigned char* key, size_t key_len, unsigned char* iv, size_t& plainlen);
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
-	int send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len);
+	int send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len);
 	int decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len, EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len, unsigned char* tag);
 	int verify_server_signature(unsigned char* signature, size_t signature_len, unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey);
     unsigned char* derive_session_key(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
@@ -76,6 +76,7 @@ public:
     int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,unsigned char* aad, int aad_len,unsigned char* tag,unsigned char* key,unsigned char* iv, int iv_len,unsigned char*& plaintext, size_t& plaintext_len);
     int gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,unsigned char* aad, size_t aad_len, unsigned char* key,unsigned char* iv, size_t iv_len, unsigned char*& ciphertext, size_t& ciphertext_len,unsigned char*& tag, size_t& tag_len);
     const EVP_CIPHER* get_authenticated_encryption_cipher();
+    unsigned char* generate_iv(EVP_CIPHER const* cipher, size_t& iv_len);
 };
 
 #define TAG_SIZE 16
