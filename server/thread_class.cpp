@@ -1034,7 +1034,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		// 3) Encrypt signature and delete it
 		ret = gcm_encrypt(signature, signature_len, iv, iv_len, shared_key, iv, iv_len, 
 		                  encrypted_sign, encrypted_sign_len, tag, tag_len);
-		for (size_t i = 0; i < signature_len; i++) {
+		for (size_t i = 0; i < signature_len; i++) { // TODO remove
 			printf("%u, ", signature[i]);
 		} printf("\n\n");
 		secure_free(signature, signature_len);
@@ -1101,6 +1101,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 6;
 		}
 
+		// TODO remove
 		for (size_t i = 0; i < iv_len; i++) {
 			printf("%u, ", iv[i]);
 		} printf("\n");
