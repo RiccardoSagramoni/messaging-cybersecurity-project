@@ -333,7 +333,7 @@ int ClientThread::negotiate(const string& username)
 		}
 
 		//crypt sign and send it
-		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len, iv, iv_len);
+		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error sending sign" << endl;
@@ -777,6 +777,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 
 
 
+
 //for verify server signature
 int ClientThread::verify_server_signature (unsigned char* signature, size_t signature_len, 
                                            unsigned char* cleartext, size_t cleartext_len, 
@@ -835,7 +836,7 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 
 
 // for encrypt and send sign
-int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len, unsigned char* iv, size_t iv_len) {
+int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len) {
 	int ret;
 	long ret_long;
 
@@ -849,6 +850,8 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 	size_t encrypted_sign_len = 0;
 	unsigned char* tag = nullptr;
 	size_t tag_len = 0;
+	unsigned char* iv= nullptr;
+	size_t iv_len = 0;
 
 
 	try {
@@ -964,6 +967,25 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		}
 	
 
+
+		//iv craft
+
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
+		if (!iv) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			<< "generate_iv failed" << endl;
+			throw 3;
+		}
+
+		//send iv
+
+		ret = send_message(main_server_socket, (void*)iv, iv_len);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			<< "send_message iv failed" << endl;
+			throw 3;
+		}
+
 		// 5b) send crypted signature
 		ret = send_message(main_server_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {
@@ -971,15 +993,16 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "send_message encrypted_signature" << endl;
 			throw 3;
 		}
+		
+		//send tag
 
-
-		// 5d) iv
-		/*ret = send_message(main_server_socket, (void*)iv, EVP_CIPHER_iv_length(get_symmetric_cipher()));
+		ret = send_message(main_server_socket, (void*)tag, tag_len);
 		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "send_message iv failed" << endl;
-			throw 6;
-		}*/
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			<< "send_message tag failed" << endl;
+			throw 3;
+		}
+
 
 	} catch (int e) {
 		if (e >= 4) {
@@ -1023,8 +1046,6 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 
 	return 1;
 }
-
-
 
 
 
@@ -1615,4 +1636,31 @@ int ClientThread::gcm_encrypt (unsigned char* plaintext, size_t plaintext_len,
 const EVP_CIPHER* ClientThread::get_authenticated_encryption_cipher ()
 {
 	return EVP_aes_128_gcm();
+}
+
+
+
+unsigned char* ClientThread::generate_iv (EVP_CIPHER const* cipher, size_t& iv_len)
+{
+	iv_len = EVP_CIPHER_iv_length(cipher);
+
+	// Allocate IV
+	unsigned char* iv = (unsigned char*)malloc(iv_len);
+	if (!iv) {
+		cerr << "[Thread " << this_thread::get_id() << "] generate_iv: "
+		<< "malloc iv failed" << endl;
+		return nullptr;
+	}
+	
+	int ret = RAND_bytes(iv, iv_len);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] generate_iv: "
+		<< "RAND_bytes failed" << endl;
+		ERR_print_errors_fp(stderr);
+		
+		free(iv);
+		return nullptr;
+	}
+
+	return iv;
 }
