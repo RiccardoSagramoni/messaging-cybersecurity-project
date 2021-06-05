@@ -310,7 +310,7 @@ int ClientThread::negotiate(const string& username)
 			throw 4;
 		}
 
-		//extract public key from certificate
+		// Extract public key from certificate
 		public_key_from_cert = X509_get_pubkey(cert);
 		if (public_key_from_cert == NULL) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
@@ -319,7 +319,7 @@ int ClientThread::negotiate(const string& username)
 		}
 		
 		//decrypt and verify server signature
-		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag);
+		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag, public_key_from_cert);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error verifying server sign" << endl;
@@ -619,7 +619,8 @@ const EVP_CIPHER* ClientThread::get_authentication_encryption_cipher ()
 int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len,
                                           EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
                                           unsigned char* shared_key, size_t shared_key_len, 
-                                          unsigned char* iv, size_t iv_len, unsigned char* tag) 
+                                          unsigned char* iv, size_t iv_len, unsigned char* tag,
+                                          EVP_PKEY* server_pubkey) 
 {
 	int ret;
 	long ret_long;
@@ -722,7 +723,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		}
 
 		// verify server sig
-		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, nullptr);
+		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, server_pubkey);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
 			<< "error verification sign" << endl;
