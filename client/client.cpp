@@ -52,7 +52,13 @@ int main(int argc, char** argv) {
 		cout << "Name must be less than 30 and more than 2 characters.";
 	}
 
-    Client client((uint16_t)port_long, username);
+    // Ask user the password for client's private key
+    string password;
+    cout << "Enter PEM password for your private key: ";
+    cin >> password; // TODO check cin ?
+
+
+    Client client((uint16_t)port_long, username, password);
     if (!client.configure_socket()) {
         perror("configure_listener_socket() failed");
 		exit(EXIT_FAILURE);

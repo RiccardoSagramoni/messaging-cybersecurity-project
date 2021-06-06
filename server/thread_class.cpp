@@ -192,6 +192,7 @@ void ServerThread::run()
 	// -) Authentication btw c/s and negotiate session key
 	string username;
 	size_t key_len = 0;
+	cout << "START" << endl; // TODO remove
 	unsigned char* key = authenticate_and_negotiate_key(username, key_len);
 	if(!key) {
 		cerr << "[Thread " << this_thread::get_id() << "] run: "
@@ -201,7 +202,8 @@ void ServerThread::run()
 		return;
 	}	
 	
-
+	cout << "STOP" << endl;
+	return;
 	// -) Ready to go	
 
 	// -) Add current client to server
@@ -728,6 +730,9 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 	size_t my_key_len = 0;
 	unsigned char* peer_key_buf = nullptr;
 	size_t peer_key_len = 0;
+	unsigned char* concat_keys = nullptr;
+	size_t concat_keys_len = 0;
+
 	try {
 		// 1) Receive message from client
 		// 1a) IV
@@ -797,33 +802,38 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		if (ret < 1) {
 			throw 6;
 		}
+
 		// 2c) Concat peer_key and my_key
-		size_t concat_keys_len = my_key_len + peer_key_len + 1;
-		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
+		concat_keys_len = my_key_len + peer_key_len + 1;
+		concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
 			throw 6;
 		}
+
 		memcpy(concat_keys, peer_key_buf, peer_key_len);
 		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
-		secure_free(concat_keys, concat_keys_len);
+		
 		// 3) Encrypt received message with shared key
 		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, 
 		                  iv, iv_len, client_signature, client_signature_len);
 		if (ret < 0) {
-			throw 6;
+			throw 7;
 		}
 
 		// 4) Verify correctness of client's response to STS protocol
 		ret = verify_client_signature(client_signature, client_signature_len, 
 		                              concat_keys, concat_keys_len, username);
 		if (ret < 0) {
-			throw 7;
+			throw 8;
 		}
 
 	} catch (int e) {
-		if (e >= 7) {
+		if (e >= 8) {
 			secure_free(client_signature, client_signature_len);
+		}
+		if (e >= 7) {
+			secure_free(concat_keys, concat_keys_len);
 		}
 		if (e >= 6) {
 			secure_free(peer_key_buf, peer_key_len);
