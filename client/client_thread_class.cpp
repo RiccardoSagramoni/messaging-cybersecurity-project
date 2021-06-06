@@ -335,7 +335,6 @@ int ClientThread::negotiate(const string& username)
 			<< "error sending sign" << endl;
 			throw 6;
 		}
-cout<<"aaaaaaaaaab";
 
 	} catch (int e) {
 		if (e >= 6) {
@@ -361,16 +360,11 @@ cout<<"aaaaaaaaaab";
 	cout<<"bbbbb";
 
 	free(iv);
-	cout<<"bbbbb";
-	//TODO error
-	//secure_free(ser_certificate, ser_certificate_len);
+	secure_free(ser_certificate, ser_certificate_len);
 	secure_free(ciphertext, ciphertext_len);
-	cout<<"bbbbb";
 	secure_free(session_key, session_key_len);
 	BIO_free(mbio);
-	cout<<"bbbbb";
 	free(username_c);
-cout<<"bbbbb";
 	return 1;
 }
 
@@ -923,11 +917,13 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "malloc concat_keys failed" << endl;
 			throw 3;
 		}
+	
 
 		memcpy(concat_keys, my_key_buf, my_key_len);
 		memcpy(concat_keys + my_key_len, peer_key_buf, peer_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
-		
+
+				
 		// 2c) Sign concat keys and remove them
 		unsigned int signature_len = 0;
 		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
@@ -936,11 +932,11 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 
 
 
-
-		#pragma optimize("", off)
+#pragma optimize("", off)
 			memset(concat_keys, 0, concat_keys_len);
 		#pragma optmize("", on)
 		free(concat_keys);
+		
 
 		if (!signature) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
@@ -991,8 +987,9 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "send_message iv failed" << endl;
 			throw 3;
 		}
-;
 
+
+		
 		// 5b) send crypted signature
 		ret = send_message(main_server_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {

@@ -200,7 +200,6 @@ void ServerThread::run()
 		close(client_socket);
 		return;
 	}	
-	cout<<"aaaaaaaaaa";
 	
 
 	// -) Ready to go	
@@ -360,7 +359,6 @@ uint8_t ServerThread::get_request_type (const unsigned char* msg)
 unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, size_t& key_len)
 {
 	int ret;
-	cout<<"aaaaaaaaaab";
 
 	EVP_PKEY* peer_key = nullptr;
 	EVP_PKEY* my_dh_key = nullptr;
@@ -418,7 +416,6 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 			<< "STS_send_session_key failed" << endl;
 			throw 4;
 		}
-cout<<"aaaaaaaaaa";
 	// 5) Receive response message by client and check its validity
 		// Message is encrypted_k{sign_by_client{g**a,g**b}}
 		
@@ -809,13 +806,14 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		memcpy(concat_keys, peer_key_buf, peer_key_len);
 		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
-		//secure_free(concat_keys, concat_keys_len);
+		secure_free(concat_keys, concat_keys_len);
 		// 3) Encrypt received message with shared key
 		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, 
 		                  iv, iv_len, client_signature, client_signature_len);
 		if (ret < 0) {
 			throw 6;
 		}
+
 		// 4) Verify correctness of client's response to STS protocol
 		ret = verify_client_signature(client_signature, client_signature_len, 
 		                              concat_keys, concat_keys_len, username);
@@ -1103,21 +1101,14 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		}
 		return -1;
 	}
-	cout<<"aaaaaaaaaab";
 
 	// Clean stuff
 	OPENSSL_free(ser_certificate);
-	cout<<"aaaaaaaaaab";
 	X509_free(certificate);
-	cout<<"aaaaaaaaaab";
 	secure_free(encrypted_sign, encrypted_sign_len);
-	cout<<"aaaaaaaaaab";
 	secure_free(peer_key_buf, peer_key_len);
-	cout<<"aaaaaaaaaab";
 	secure_free(my_key_buf, my_key_len);
-	cout<<"aaaaaaaaaab";
 	BIO_free(mbio);
-	cout<<"aaaaaaaaaab";
 	return 1;
 }
 
@@ -1372,7 +1363,7 @@ int ServerThread::verify_client_signature (unsigned char* signature, size_t sign
 		if (!client_pubkey) {
 			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
 			<< "client's public key is not installed" << endl;
-			return_value = -2;
+			return_value = -1;
 			throw 0;
 		}
 
