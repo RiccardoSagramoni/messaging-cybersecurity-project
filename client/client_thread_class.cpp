@@ -138,8 +138,9 @@ void ClientThread::run()
 
 	string username = client->get_username();
     ret = negotiate(username);
+	cout<<"aaaaaaaaaa";
 	if (ret < 0) return;
-	
+	cout<<"aaaaaaaaaa";
 	while (true) {
 
 	}
@@ -158,6 +159,7 @@ int ClientThread::negotiate(const string& username)
 	size_t ser_certificate_len = 0;
 	unsigned char* iv = nullptr;
 	size_t iv_len = 0;
+	size_t* iv_len_p = &iv_len;
     char* username_c = nullptr;
 	BIO* mbio = nullptr;
 	char* pubkey_buf = nullptr;
@@ -242,6 +244,8 @@ int ClientThread::negotiate(const string& username)
 		}
 
 
+
+
 		//receive iv (initialization vector)
 		ret = receive_message(main_server_socket, (void**)&iv);
 		if (ret <= 0) {
@@ -251,8 +255,6 @@ int ClientThread::negotiate(const string& username)
 		}
 
 		iv_len=ret;
-
-
 		//receive crypto sign
 		ret = receive_message(main_server_socket, (void**)&ciphertext);
 		if (ret <= 0) {
@@ -326,7 +328,6 @@ int ClientThread::negotiate(const string& username)
 			<< "error verifying server sign" << endl;
 			throw 6;
 		}
-
 		//crypt sign and send it
 		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len);
 		if (ret <= 0) {
@@ -334,6 +335,7 @@ int ClientThread::negotiate(const string& username)
 			<< "error sending sign" << endl;
 			throw 6;
 		}
+cout<<"aaaaaaaaaab";
 
 	} catch (int e) {
 		if (e >= 6) {
@@ -356,14 +358,19 @@ int ClientThread::negotiate(const string& username)
 		}
 		return -1;
 	}
+	cout<<"bbbbb";
 
 	free(iv);
-	secure_free(ser_certificate, ser_certificate_len);
+	cout<<"bbbbb";
+	//TODO error
+	//secure_free(ser_certificate, ser_certificate_len);
 	secure_free(ciphertext, ciphertext_len);
+	cout<<"bbbbb";
 	secure_free(session_key, session_key_len);
 	BIO_free(mbio);
+	cout<<"bbbbb";
 	free(username_c);
-
+cout<<"bbbbb";
 	return 1;
 }
 
@@ -925,6 +932,11 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		unsigned int signature_len = 0;
 		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
 
+
+
+
+
+
 		#pragma optimize("", off)
 			memset(concat_keys, 0, concat_keys_len);
 		#pragma optmize("", on)
@@ -936,6 +948,17 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			throw 3;
 		}
 
+
+		//iv craft
+
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
+		if (!iv) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			<< "generate_iv failed" << endl;
+			throw 3;
+		}
+
+
 		// 3) Encrypt signature and delete it
 		ret = gcm_encrypt(signature, signature_len, iv, iv_len, shared_key, iv, iv_len, encrypted_sign, encrypted_sign_len, tag, tag_len);
 		if (ret !=1) {
@@ -943,6 +966,9 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "failed to crypt" << endl;
 			throw 3;
 		}
+
+
+	
 		#pragma optimize("", off)
 			memset(signature, 0, signature_len);
 		#pragma optmize("", on)
@@ -955,15 +981,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		}
 	
 
-
-		//iv craft
-
-		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
-		if (!iv) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
-			<< "generate_iv failed" << endl;
-			throw 3;
-		}
+		
 
 		//send iv
 
@@ -973,6 +991,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "send_message iv failed" << endl;
 			throw 3;
 		}
+;
 
 		// 5b) send crypted signature
 		ret = send_message(main_server_socket, (void*)encrypted_sign, encrypted_sign_len);
@@ -981,7 +1000,6 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "send_message encrypted_signature" << endl;
 			throw 3;
 		}
-		
 		//send tag
 
 		ret = send_message(main_server_socket, (void*)tag, tag_len);
@@ -990,6 +1008,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "send_message tag failed" << endl;
 			throw 3;
 		}
+
 
 
 	} catch (int e) {
