@@ -1,8 +1,9 @@
 #include "client.h"
 
-Client::Client(const uint16_t _port, const string& _name) : port(_port)
+Client::Client(const uint16_t _port, const string _name, const string _password) : port(_port)
 {
     name = _name;
+    password = _password;
 }
 
 Client::~Client()
@@ -12,6 +13,11 @@ Client::~Client()
 string Client::get_username ()
 {
     return name;
+}
+
+string Client::get_password ()
+{
+    return password;
 }
 
 bool Client::configure_socket() {

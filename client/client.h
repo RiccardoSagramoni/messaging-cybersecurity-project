@@ -25,12 +25,13 @@ using namespace std;
 class Client {
     int sockfd = 0;
     string name;
+    string password;
     sockaddr_in server_addr;
     string ip = "127.0.0.1";
     const uint16_t port;
 
 public:
-    Client(const uint16_t _port, const string& _name);
+    Client(const uint16_t _port, const string _name, const string _password);
     ~Client();
     bool configure_socket();
     bool connects();
@@ -41,6 +42,7 @@ public:
     int get_sock();
 
     string get_username ();
+    string get_password();
 };
 
 class ClientThread {
@@ -50,6 +52,8 @@ class ClientThread {
 	const string filename_prvkey = "rsa_privkey.pem";
     const string filename_CA_certificate = "FoundationsOfCybersecurity_cert.pem";
     const string filename_crl = "FoundationsOfCybersecurity_crl.pem";
+
+
 public:
 	ClientThread(Client* cli, const int socket, const sockaddr_in addr);
 	void run();

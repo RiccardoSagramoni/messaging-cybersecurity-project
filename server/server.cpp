@@ -54,7 +54,7 @@ int main (int argc, char** argv)
 			perror("Server::accept_client failed");
 			continue;
         }
-
+		
         thread t(new_thread, &server, new_socket, client_addr);
 		t.detach();
 	}

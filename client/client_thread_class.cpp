@@ -7,6 +7,7 @@ ClientThread::ClientThread(Client* cli, const int socket, const sockaddr_in addr
 	main_server_address = addr;
 }
 
+
 DH* ClientThread::get_dh2048 ()
 {
     static unsigned char dhp_2048[] = {
@@ -240,7 +241,6 @@ int ClientThread::negotiate(const string& username)
 			throw 2;
 		}
 
-
 		//receive iv (initialization vector)
 		ret = receive_message(main_server_socket, (void**)&iv);
 		if (ret <= 0) {
@@ -250,8 +250,6 @@ int ClientThread::negotiate(const string& username)
 		}
 
 		iv_len=ret;
-
-
 		//receive crypto sign
 		ret = receive_message(main_server_socket, (void**)&ciphertext);
 		if (ret <= 0) {
@@ -279,7 +277,7 @@ int ClientThread::negotiate(const string& username)
 			throw 4;
 		}
 		ser_certificate_len = ret;
-		cert = d2i_X509(nullptr, (const unsigned char**)&ser_certificate, ser_certificate_len);
+		cert = d2i_X509(nullptr, (const unsigned char**)&ser_certificate, ser_certificate_len); // ? error
 		if (!cert) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error deserialize certificate" << endl;
@@ -319,13 +317,12 @@ int ClientThread::negotiate(const string& username)
 		}
 		
 		//decrypt and verify server signature
-		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag, public_key_from_cert);
+		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, peer_key, session_key, session_key_len, iv, iv_len, tag, public_key_from_cert);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error verifying server sign" << endl;
 			throw 6;
 		}
-
 		//crypt sign and send it
 		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len);
 		if (ret <= 0) {
@@ -357,12 +354,11 @@ int ClientThread::negotiate(const string& username)
 	}
 
 	free(iv);
-	secure_free(ser_certificate, ser_certificate_len);
+	secure_free(ser_certificate, ser_certificate_len); // leak size 1 + 8
 	secure_free(ciphertext, ciphertext_len);
 	secure_free(session_key, session_key_len);
 	BIO_free(mbio);
 	free(username_c);
-
 	return 1;
 }
 
@@ -823,7 +819,7 @@ int ClientThread::verify_server_signature (unsigned char* signature, size_t sign
 
 
 // for encrypt and send sign
-int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len) {
+int ClientThread::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len) {
 	int ret;
 	long ret_long;
 
@@ -842,7 +838,8 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 
 
 	try {
-		// 1) Serialize server's key (g**b)
+		// 1) Prepare string < g**a, g**b > for signature
+		// 1a) Serialize client's key (g**a)
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
@@ -877,9 +874,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			throw 2;
 		}
 
-
-		// 2) Prepare string < g**b, g**a > for signature
-		// 2a) Serialize peer key
+		// 1b) Serialize peer key (g**b)
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
@@ -907,7 +902,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			throw 3;
 		}
 
-		// 2b) Concat my_key and peer_key
+		// 1c) Concat my_key and peer_key
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
@@ -919,21 +914,28 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 		memcpy(concat_keys, my_key_buf, my_key_len);
 		memcpy(concat_keys + my_key_len, peer_key_buf, peer_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
-		
-		// 2c) Sign concat keys and remove them
+
+				
+		// 2) Sign concat keys and remove them
 		unsigned int signature_len = 0;
 		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
-
-		#pragma optimize("", off)
-			memset(concat_keys, 0, concat_keys_len);
-		#pragma optmize("", on)
-		free(concat_keys);
+		secure_free(concat_keys, concat_keys_len);
 
 		if (!signature) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "sign_message failed" << endl;
 			throw 3;
 		}
+
+
+		// Generate IV
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
+		if (!iv) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			<< "generate_iv failed" << endl;
+			throw 3;
+		}
+
 
 		// 3) Encrypt signature and delete it
 		ret = gcm_encrypt(signature, signature_len, iv, iv_len, shared_key, iv, iv_len, encrypted_sign, encrypted_sign_len, tag, tag_len);
@@ -942,10 +944,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "failed to crypt" << endl;
 			throw 3;
 		}
-		#pragma optimize("", off)
-			memset(signature, 0, signature_len);
-		#pragma optmize("", on)
-		free(signature);
+		secure_free(signature, signature_len);
 
 		if (!encrypted_sign) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
@@ -953,26 +952,15 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			throw 3;
 		}
 	
-
-
-		//iv craft
-
-		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
-		if (!iv) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
-			<< "generate_iv failed" << endl;
-			throw 3;
-		}
-
-		//send iv
-
+		// 5) Send messages
+		// 5a) Send iv
 		ret = send_message(main_server_socket, (void*)iv, iv_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message iv failed" << endl;
 			throw 3;
 		}
-
+		
 		// 5b) send crypted signature
 		ret = send_message(main_server_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {
@@ -980,9 +968,8 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			<< "send_message encrypted_signature" << endl;
 			throw 3;
 		}
-		
-		//send tag
 
+		// 5c) Send tag
 		ret = send_message(main_server_socket, (void*)tag, tag_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
@@ -990,25 +977,15 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 			throw 3;
 		}
 
-
 	} catch (int e) {
 		if (e >= 4) {
-			#pragma optimize("", off);
-				memset(encrypted_sign, 0, encrypted_sign_len);
-			#pragma optimize("", on);
-			free(encrypted_sign);
+			secure_free(encrypted_sign, encrypted_sign_len);
 		}
 		if (e >= 3) {
-			#pragma optimize("", off);
-				memset(peer_key_buf, 0, peer_key_len);
-			#pragma optimize("", on);
-			free(peer_key_buf);
+			secure_free(peer_key_buf, peer_key_len);
 		}
 		if (e >= 2) {
-			#pragma optimize("", off);
-				memset(my_key_buf, 0, my_key_len);
-			#pragma optimize("", on);
-			free(my_key_buf);
+			secure_free(my_key_buf, my_key_len);
 		}
 		if (e >= 1) {
 			BIO_free(mbio);
@@ -1017,18 +994,9 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key,EVP_PKEY* peer_key, unsigned char
 	}
 
 	// Clean stuff
-	#pragma optimize("", off);
-		memset(encrypted_sign, 0, encrypted_sign_len);
-	#pragma optimize("", on);
-	free(encrypted_sign);
-	#pragma optimize("", off);
-		memset(peer_key_buf, 0, peer_key_len);
-	#pragma optimize("", on);
-	free(peer_key_buf);
-	#pragma optimize("", off);
-		memset(my_key_buf, 0, my_key_len);
-	#pragma optimize("", on);
-	free(my_key_buf);
+	secure_free(encrypted_sign, encrypted_sign_len);
+	secure_free(peer_key_buf, peer_key_len);
+	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
 
 	return 1;
@@ -1044,8 +1012,8 @@ unsigned char* ClientThread::sign_message(unsigned char* msg, size_t msg_len, un
 	EVP_MD_CTX* ctx = nullptr;
 	unsigned char* signature = nullptr;
 	
-	try {
-		//get private key
+	try {		
+		// get private key
 		prvkey = get_client_private_key();
 		if (!prvkey) {
 			cerr << "[Thread " << this_thread::get_id() << "] sign_message: "
@@ -1120,18 +1088,29 @@ unsigned char* ClientThread::sign_message(unsigned char* msg, size_t msg_len, un
 //get private key
 EVP_PKEY* ClientThread::get_client_private_key ()
 {
+	size_t password_len = client->get_password().length() + 1;
+	char* password = (char*)malloc(password_len);
+	if (!password) {
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_private_key: "
+		<< "malloc password failed" << endl;
+		return nullptr;
+	}
+	strcpy(password, client->get_password().c_str());
+	
 	// Load my private key:
 	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
 	if (!prvkey_file) {
-		cerr << "[Thread " << this_thread::get_id() << "] Error: "
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_private_key: "
 		<< "Cannot open " << filename_prvkey << endl;
+		secure_free(password, password_len);
 		return nullptr;
 	}
 
-	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, NULL);
+	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, password);
 	fclose(prvkey_file);
+	secure_free(password, password_len);
 	if(!prvkey) { 
-		cerr << "[Thread " << this_thread::get_id() << "] Error: "
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_private_key: "
 		<< "PEM_read_PrivateKey returned NULL" << endl; 
 		return nullptr;
 	}
