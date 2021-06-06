@@ -360,6 +360,7 @@ uint8_t ServerThread::get_request_type (const unsigned char* msg)
 unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, size_t& key_len)
 {
 	int ret;
+	cout<<"aaaaaaaaaab";
 
 	EVP_PKEY* peer_key = nullptr;
 	EVP_PKEY* my_dh_key = nullptr;
@@ -409,7 +410,6 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 			<< "generate_iv failed" << endl;
 			throw 3;
 		}
-	cout<<"aaaaaaaaaab";
 
 		// 4b) Send message
 		ret = STS_send_session_key(session_key, session_key_len, my_dh_key, peer_key, iv, iv_len);
