@@ -7,6 +7,7 @@ ClientThread::ClientThread(Client* cli, const int socket, const sockaddr_in addr
 	main_server_address = addr;
 }
 
+
 DH* ClientThread::get_dh2048 ()
 {
     static unsigned char dhp_2048[] = {
@@ -319,7 +320,7 @@ int ClientThread::negotiate(const string& username)
 		}
 		
 		//decrypt and verify server signature
-		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, public_key_from_cert, session_key, session_key_len, iv, iv_len, tag, public_key_from_cert);
+		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, peer_key, session_key, session_key_len, iv, iv_len, tag, public_key_from_cert);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error verifying server sign" << endl;
