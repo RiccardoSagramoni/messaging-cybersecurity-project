@@ -15,6 +15,50 @@ ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in add
 }
 
 /**
+ * Start the thread
+ */
+void ServerThread::run()
+{
+	int ret;
+
+	// 1) Authenticate client and negotiate session key
+	cout << "START" << endl; // TODO remove
+
+	client_key  = authenticate_and_negotiate_key(client_username, client_key_len);
+	if(!client_key) {
+		cerr << "[Thread " << this_thread::get_id() << "] run: "
+			<< "authenticate_and_negotiate_key failed. "
+			<< "Closing this thread and socket " << client_socket << endl;
+		close(client_socket);
+		return;
+	}	
+	
+	cout << "STOP" << endl;	
+
+	// 2) Add current client to server
+	if (!server->add_new_client(client_username, client_socket, client_key, client_key_len)) {
+		cerr << "[Thread " << this_thread::get_id() << "] run: "
+		<< "client " << client_username << " already logged." << endl
+		<< "Closing this thread and socket " << client_socket << endl;;
+		send_error_response(client_socket, ERR_ALREADY_LOGGED, client_key);
+		close(client_socket);
+		return;
+	}
+
+	// -) Cycle
+		// -) Wait for command
+		// -) Execute command
+	while (true) {
+		unsigned char* msg;
+		ret = get_new_client_command(msg);
+		ret = execute_client_command(msg);
+		free(msg);
+
+		// TODO Check ret
+	}
+}
+
+/**
  * Generate public DH parameters for this application
  * 
  * @return DH parameters
@@ -183,48 +227,6 @@ unsigned char* ServerThread::sign_message(unsigned char* msg, size_t msg_len, un
 }
 
 /**
- * Start the thread
- */
-void ServerThread::run()
-{
-	int ret;
-
-	// -) Authentication btw c/s and negotiate session key
-	string username;
-	size_t key_len = 0;
-	cout << "START" << endl; // TODO remove
-	unsigned char* key = authenticate_and_negotiate_key(username, key_len);
-	if(!key) {
-		cerr << "[Thread " << this_thread::get_id() << "] run: "
-			<< "authenticate_and_negotiate_key failed. "
-			<< "Closing this thread and socket " << client_socket << endl;
-		close(client_socket);
-		return;
-	}	
-	
-	cout << "STOP" << endl;
-	return;
-	// -) Ready to go	
-
-	// -) Add current client to server
-	server->add_new_client(username, client_socket); // TODO handle failure
-
-
-	// -) Cycle
-		// -) Wait for command
-		// -) Execute command
-	while (true) {
-/*
-		unsigned char* msg = get_new_client_command();
-		ret = execute_client_command(msg);
-		free(msg);
-*/
-
-		// TODO Check ret
-	}
-}
-
-/**
  * Send a message through the specified socket
  * 
  * @param socket socket descriptor
@@ -242,14 +244,14 @@ int ServerThread::send_message (const int socket, void* msg, const uint32_t msg_
 	
 	// Send message's length
 	ret = send(socket, &len, sizeof(len), 0);
-	if (ret < 0) {
+	if (ret <= 0) {
 		perror("Error while sending message's length");
 		return -1;
 	}
 	
 	// Send the message
 	ret = send(socket, msg, msg_len, 0);
-	if (ret < 0) {
+	if (ret <= 0) {
 		perror("Error while sending message");
 		return -1;
 	}
@@ -310,18 +312,173 @@ long ServerThread::receive_message (const int socket, void** msg)
 }
 
 /**
+ * Send an error message through the specified socket
+ * 
+ * @param socket socket descriptor
+ * @param type type of error
+ * @param key shared key between client and server
+ * 
+ * @return 1 on success, -1 on failure
+ */
+int ServerThread::send_error_response (const int socket, const uint8_t type, unsigned char* key)
+{
+	uint8_t msg[2] = {SERVER_ERR, type};
+	
+	return send_response(socket, msg, 2, key);
+}
+
+/**
+ * Send a response message to the client
+ * 
+ * @param socket socket descriptor
+ * @param msg message
+ * @param msg_len message length
+ * @param key shared key between client and server
+ * 
+ * @return 1 on success, -1 on failure
+ */
+int ServerThread::send_response (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key)
+{
+	int ret;
+
+	unsigned char* iv = nullptr;
+	size_t iv_len = 0;
+	unsigned char* key = nullptr;
+	size_t key_len = 0;
+	unsigned char* ciphertext = nullptr;
+	size_t ciphertext_len = 0;
+	unsigned char* tag = nullptr;
+	size_t tag_len = 0;
+
+	try {
+		// 1) Generate IV
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
+		if (!iv) {
+			throw 0;
+		}
+
+		// 2) Encrypt message
+		ret = gcm_encrypt(msg, msg_len, iv, iv_len, key, iv, iv_len, ciphertext, ciphertext_len, 
+		                  tag, tag_len);
+		if (ret < 0) {
+			throw 1;
+		}
+
+		// 3) Send iv
+		ret = send_message(socket, iv, iv_len);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// 4) Send message
+		ret = send_message(socket, ciphertext, ciphertext_len);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// 5) Send tag
+		ret = send_message(socket, tag, tag_len);
+		if (ret < 0) {
+			throw 2;
+		}
+
+	} catch (int e) {
+		if (e >= 2) {
+			free(ciphertext);
+			free(tag);
+		}
+		if (e >= 1) {
+			free(iv);
+		}
+		return -1;
+	}
+
+	free(ciphertext);
+	free(tag);
+	free(iv);
+
+	return 1;
+}
+
+/**
+ * Receive a new message from the client
+ * 
+ * @param msg on success it will point to the received message
+ * 
+ * @return 1 on success, 0 if the client closes the socket, -1 if any other error occurs
+ */
+int ServerThread::get_new_client_command (unsigned char*& msg)
+{
+	long ret_long = -1;
+	
+	unsigned char* iv = nullptr;
+	unsigned char* ciphertext = nullptr;
+	unsigned char* tag = nullptr;
+
+	size_t msg_len;
+
+	try {
+		// 1) Receive iv
+		ret_long = receive_message(client_socket, (void**)&msg);
+		if (ret_long <= 0) {
+			throw 0;
+		}
+		size_t iv_len = ret_long;
+
+		// 2) Receive ciphertext
+		ret_long = receive_message(client_socket, (void**)&ciphertext);
+		if (ret_long <= 0) {
+			throw 1;
+		}
+		size_t ciphertext_len = ret_long;
+
+		// 3) Receive tag
+		ret_long = receive_message(client_socket, (void**)&tag);
+		if (ret_long <= 0) {
+			throw 2;
+		}
+		size_t tag_len = ret_long;
+
+		// 4) Decrypt message
+		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, client_key, 
+		                      iv, iv_len, msg, msg_len);
+		if (ret < 0) {
+			throw 3;
+		}
+	
+	} catch (int e) {
+		if (e >= 3) {
+			free(tag);
+		}
+		if (e >= 2) {
+			free(ciphertext);
+		}
+		if (e >= 1) {
+			free(iv);
+		}
+		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
+	}
+
+	free(tag);
+	free(ciphertext);
+	free(iv);
+
+	return 1;
+}
+
+/**
  * Parse received message from client and execute its request
  * 
  * @param msg received message
  * @return 1 on success, -1 on failure
- */ /*
+ */
 int ServerThread::execute_client_command (const unsigned char* msg) 
 {
 	uint8_t request_type = get_request_type(msg);
 	
 	switch (request_type) {
 		case TYPE_SHOW:
-			execute_show(msg);
+			execute_show();
 			break;
 		case TYPE_TALK:
 			execute_talk(msg);
@@ -335,7 +492,6 @@ int ServerThread::execute_client_command (const unsigned char* msg)
 
 	return 1;
 }
-*/
 
 /**
  * Given a message, extract the type of client's message
@@ -346,6 +502,53 @@ int ServerThread::execute_client_command (const unsigned char* msg)
 uint8_t ServerThread::get_request_type (const unsigned char* msg)
 {
 	return (uint8_t)msg[0];
+}
+
+
+int ServerThread::execute_show ()
+{
+	// 1) Get list of client logged to the server
+	list<string> l = server->get_available_clients_list();
+
+	// 2) Serialize list
+	// 2a) Calculate necessary space
+	size_t message_len = 1;
+	for (auto s : l) {
+		message_len += (s.length() + 1);
+	}
+
+	// 2b) Allocate message
+	char* message = (char*)malloc(message_len);
+	if (!message) {
+		return -1;
+	}
+
+	// 2c) Initialise message
+	uint8_t* type = (uint8_t*)&message[0];
+	*type = SERVER_OK;
+	size_t pos = 1;
+
+	for (auto s: l) {
+		// a) Insert username length
+		uint32_t string_size = s.length() + 1;
+		string_size = htonl(string_size);
+		memcpy(message + pos, &string_size, sizeof(string_size));
+		pos += sizeof(string_size);
+
+		// b) Insert username
+		memcpy(message + pos, s.c_str(), string_size);
+		pos += string_size;
+	}
+
+	// 3) Send message
+	int ret = send_response(client_socket, (unsigned char*)message, message_len, client_key);
+	free(message);
+
+	if (ret < 0) {
+		return -1;
+	}
+
+	return 1;
 }
 
 

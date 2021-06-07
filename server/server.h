@@ -32,9 +32,11 @@ struct connection_data {
 
 	bool available = true;
 	
-	// TODO chiave pubblica
+	const unsigned char* key;
+	const size_t key_len;
 
-	connection_data(const int _socket) : socket(_socket)
+	connection_data(const int _socket, const unsigned char* _key, const size_t _key_len) : 
+		socket(_socket), key(_key), key_len(_key_len)
 	{
 		
 	}
@@ -64,9 +66,11 @@ public:
 
 	bool configure_listener_socket();
 	int accept_client (sockaddr_in* client_addr);
-	bool add_new_client (string username, const int socket);
-	bool handle_socket_lock (const string username, const bool lock, const bool input);
-	int close_client (const string username);
+	bool add_new_client (string username, const int socket, 
+	                     const unsigned char* key, const size_t key_len);
+	bool handle_socket_lock (const string& username, const bool lock, const bool input);
+	unsigned char* get_client_shared_key (const string& username, size_t& key_len);
+	int close_client (const string& username);
 	
 	// }
 	
@@ -89,7 +93,9 @@ class ServerThread {
 	int client_socket;
 	sockaddr_in main_client_address;
 
-	string username;
+	string client_username;
+	unsigned char* client_key;
+	size_t client_key_len;
 
 	// Base methods for networking {
 
@@ -136,11 +142,14 @@ class ServerThread {
 
 	// Management of client's request {
 
-	//unsigned char* get_new_client_command ();
-	//int execute_client_command (const unsigned char* msg);
-	//int execute_show (const unsigned char*);
-	//int execute_talk (const unsigned char*);
-	//int execute_exit ();
+	int send_response (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
+	int send_error_response (const int socket, const uint8_t type, unsigned char* key);
+
+	int get_new_client_command (unsigned char*& msg);
+	int execute_client_command (const unsigned char* msg);
+	int execute_show ();
+	int execute_talk (const unsigned char*);
+	int execute_exit ();
 
 	uint8_t get_request_type (const unsigned char* msg);
 	bool check_username_validity(const string& username);
@@ -177,6 +186,15 @@ public:
 	#define		TYPE_SHOW		0x00
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
+// }
+
+// Type of server messages (1 byte) {
+	#define		SERVER_OK		0x00
+	#define		SERVER_ERR		0xFF
+// }
+
+// Type of errors (1 byte) {
+	#define		ERR_ALREADY_LOGGED		0x01
 // }
 
 #define TAG_SIZE 16

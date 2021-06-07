@@ -75,14 +75,15 @@ int Server::accept_client (sockaddr_in* client_addr)
  * 
  * @return true on success, false on failure (client already logged in)
  */
-bool Server::add_new_client (string username, const int socket)
+bool Server::add_new_client (string username, const int socket, 
+                             const unsigned char* key, const size_t key_len)
 {
 	// Acquire lock for connected_client data structure
 	// (automatically unlock at the end of its scope)
 	lock_guard<shared_timed_mutex> lock(connected_client_mutex);
 
 	// Prepare data structure related to the client
-	connection_data* data = new connection_data(socket);
+	connection_data* data = new connection_data(socket, key, key_len);
 
 	// Add user to the list of connected client
 	auto ret = connected_client.insert({username, data});
@@ -99,7 +100,7 @@ bool Server::add_new_client (string username, const int socket)
  * 
  * @return true on success, false on failure
  */
-bool Server::handle_socket_lock (const string username, const bool lock, const bool input)
+bool Server::handle_socket_lock (const string& username, const bool lock, const bool input)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -175,7 +176,7 @@ bool Server::is_client_online (const string& username)
  * @param username identifier of the client
  * @return 1 on success, -1 on failure 
  */
-int Server::close_client (const string username)
+int Server::close_client (const string& username)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -205,3 +206,46 @@ int Server::close_client (const string username)
 
 	return 1;
 }
+
+/**
+ * Create a copy of the key shared with the chosen client
+ * 
+ * @param username id of client
+ * @param key_len on success it will contain the length of the key
+ * 
+ * @return the shared key on success, NULL on failure
+ */
+unsigned char* Server::get_client_shared_key (const string& username, size_t& key_len)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data = nullptr;
+
+	// Get client data associated with given username.
+	// Fails if there is no associated data.
+	try {
+		client_data = connected_client.at(username);
+	}
+	catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::get_client_shared_key: "
+		<< "username " << username << " is not logged" << endl;
+		return nullptr;
+	}
+
+	// Acquire shared lock for reading client's data structure
+	shared_lock<shared_timed_mutex> mutex_client_data(client_data->mutex_struct);
+
+	unsigned char* key = (unsigned char*)malloc(client_data->key_len);
+	if (!key) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::get_client_shared_key: "
+		<< "malloc key failed" << endl;
+		return nullptr;
+	}
+
+	memcpy(key, client_data->key, client_data->key_len);
+	key_len = client_data->key_len;
+
+	return key;
+}
+
