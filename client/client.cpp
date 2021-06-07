@@ -1,13 +1,12 @@
 #include "client.h"
 #define LENGTH 2048
 
-
-
 void thread_main (Client* client, const int socket, const sockaddr_in addr) 
 {
 	ClientThread st(client, socket, addr);
 	st.run();
 }
+
 void send_thread (Client* client, const int socket, const sockaddr_in addr) 
 {
 	ClientThread st(client, socket, addr);
@@ -30,7 +29,8 @@ void receive_thread (Client* client, const int socket, const sockaddr_in addr)
 
 
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv) 
+{
     if(argc != 2) {
 		cerr << "Usage: " << argv[0] << " <port>\n";
 		exit(EXIT_FAILURE);
@@ -64,9 +64,11 @@ int main(int argc, char** argv) {
 		exit(EXIT_FAILURE);
     }
     if (!client.connects()) {
-        perror("connect() failed");
+        perror("connects() failed");
 		exit(EXIT_FAILURE);
     }
+
+    cout << "=== WELCOME TO THE CHATROOM ===" << endl;
 
     /*thread t(send_thread, &client, client.get_sock(), client.get_server_addr());
     thread tt(receive_thread, &client, client.get_sock(), client.get_server_addr());*/

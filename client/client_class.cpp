@@ -35,14 +35,11 @@ bool Client::configure_socket() {
 }
 
 bool Client::connects() {
-    int ret;
     int err = connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
     if (err == -1) {
-		printf("ERROR: connect\n");
+		cerr << "ERROR: connect\n";
 		return false;
 	}
-
-    printf("=== WELCOME TO THE CHATROOM ===\n");
     return true;
 }
 

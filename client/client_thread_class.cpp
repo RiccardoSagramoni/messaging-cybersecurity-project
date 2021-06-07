@@ -167,11 +167,8 @@ int ClientThread::negotiate(const string& username)
 	unsigned char* session_key = nullptr;
 	size_t session_key_len = 0;
     EVP_PKEY* peer_key = nullptr;
-	//sig
 	unsigned char* ciphertext = nullptr;
 	size_t ciphertext_len = 0;
-	unsigned char* plain_sig = nullptr;
-	size_t plain_sig_len_len = 0;
 
     //generate g^a
     EVP_PKEY* my_dh_key = generate_key_dh();
@@ -190,8 +187,9 @@ int ClientThread::negotiate(const string& username)
 			throw 0;
 		}
     	strcpy(username_c, username.c_str());
+
 		//send username to the server
-    	ret = send_message(main_server_socket, (void*) username_c, (uint32_t) strlen(username_c));
+    	ret = send_message(main_server_socket, (void*)username_c, (uint32_t)strlen(username_c) + 1);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error send username" << endl;
@@ -356,8 +354,8 @@ int ClientThread::negotiate(const string& username)
 	}
 
 	free(iv);
-	secure_free(ser_certificate, ser_certificate_len); // leak size 1 + 8
-	secure_free(ciphertext, ciphertext_len);
+	secure_free(ser_certificate, ser_certificate_len);
+	secure_free(ciphertext, ciphertext_len); // ? bug
 	secure_free(session_key, session_key_len);
 	BIO_free(mbio);
 	free(username_c);
@@ -613,7 +611,7 @@ const EVP_CIPHER* ClientThread::get_authentication_encryption_cipher ()
 
 
 
-// decrypt and verification sign
+// Decrypt and verify  sign
 int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len,
                                           EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
                                           unsigned char* shared_key, size_t shared_key_len, 
@@ -635,8 +633,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 	size_t concat_keys_len = 0;
 
 	try {
-
-		// 2a) Serialize server's key (g**b)
+		// 1) Serialize server's key (g**b)
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
@@ -671,7 +668,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 			throw 3;
 		}
 
-		// 2b) Serialize peer key
+		// 2) Serialize peer key
 		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
@@ -699,7 +696,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 			throw 4;
 		}
 
-		// 2c) Concat peer_key and my_key
+		// 3) Concat peer_key and my_key
 		concat_keys_len = my_key_len + peer_key_len + 1;
 		concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
@@ -712,7 +709,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		memcpy(concat_keys + peer_key_len, my_key_buf, my_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
 
-		// 3) Decrypt received message with shared key
+		// 4) Decrypt received message with shared key
 		ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, server_signature, server_signature_len);
 		if (ret!=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
@@ -720,7 +717,7 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 			throw 5;
 		}
 
-		// verify server sig
+		// 5) Verify server sig
 		ret = verify_server_signature(server_signature, server_signature_len, concat_keys, concat_keys_len, server_pubkey);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] decrypt_and_verify_sign: "
@@ -744,9 +741,6 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 		if (e >= 2) {
 			BIO_free(mbio);
 		}
-		if (e >= 1) {
-			free(ciphertext);
-		}
 		return -1;
 	}
 
@@ -755,7 +749,6 @@ int ClientThread::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciph
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
-	free(ciphertext);
 
 	return 1;
 }
