@@ -933,7 +933,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 	// Declare variables for certificates
 	X509* certificate = nullptr;
 	unsigned char* ser_certificate = nullptr;
-	size_t ser_certificate_len = 0;
+	long ser_certificate_len = 0;
 
 	try {
 		// 1) Serialize server's key (g**b)
@@ -1048,6 +1048,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 5;
 		}
 		ser_certificate_len = ret;
+		
 		// 5) SEND MESSAGES TO CLIENT
 		// 5a) g**b
 		ret = send_message(client_socket, (void*)my_key_buf, my_key_len);

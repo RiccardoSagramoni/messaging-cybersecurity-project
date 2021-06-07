@@ -155,7 +155,7 @@ int ClientThread::negotiate(const string& username)
 	X509* cert_CA=nullptr;
 	X509_CRL* crl_CA=nullptr;
 	unsigned char* ser_certificate = nullptr;
-	size_t ser_certificate_len = 0;
+	long ser_certificate_len = 0;
 	unsigned char* iv = nullptr;
 	size_t iv_len = 0;
     char* username_c = nullptr;
@@ -277,7 +277,9 @@ int ClientThread::negotiate(const string& username)
 			throw 4;
 		}
 		ser_certificate_len = ret;
-		cert = d2i_X509(nullptr, (const unsigned char**)&ser_certificate, ser_certificate_len); // ? error
+
+		unsigned char* temp_ser_certificate = ser_certificate;
+		cert = d2i_X509(nullptr, (const unsigned char**)&temp_ser_certificate, ser_certificate_len);
 		if (!cert) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error deserialize certificate" << endl;
