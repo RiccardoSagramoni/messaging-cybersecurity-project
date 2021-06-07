@@ -29,7 +29,9 @@ void ServerThread::run()
 		cerr << "[Thread " << this_thread::get_id() << "] run: "
 			<< "authenticate_and_negotiate_key failed. "
 			<< "Closing this thread and socket " << client_socket << endl;
+		
 		close(client_socket);
+		
 		return;
 	}	
 	
@@ -39,22 +41,44 @@ void ServerThread::run()
 	if (!server->add_new_client(client_username, client_socket, client_key, client_key_len)) {
 		cerr << "[Thread " << this_thread::get_id() << "] run: "
 		<< "client " << client_username << " already logged." << endl
-		<< "Closing this thread and socket " << client_socket << endl;;
+		<< "Closing this thread and socket " << client_socket << endl;
+
 		send_error_response(client_socket, ERR_ALREADY_LOGGED, client_key);
+
 		close(client_socket);
+		secure_free(client_key, client_key_len);
+
 		return;
 	}
 
-	// -) Cycle
-		// -) Wait for command
-		// -) Execute command
-	while (true) {
-		unsigned char* msg;
-		ret = get_new_client_command(msg);
-		ret = execute_client_command(msg);
-		free(msg);
+	// 3) Serve the client
+	try {
+			
+		while (true) {
+			unsigned char* msg = nullptr;
 
-		// TODO Check ret
+			// 3a) Wait for command
+			ret = get_new_client_command(msg);
+			if (ret < 0) {
+				continue;
+			}
+			else if (ret == 0) {
+				execute_exit();
+				return;
+			}
+
+			// 3b) Execute received command
+			ret = execute_client_command(msg);
+			free(msg);
+			if (ret < 0) {
+				execute_exit();
+				return;
+			}
+		}
+
+	} catch (...) { // Handle unpredictable failure
+		execute_exit();
+		rethrow_exception(current_exception());
 	}
 }
 
@@ -418,6 +442,11 @@ int ServerThread::get_new_client_command (unsigned char*& msg)
 	size_t msg_len;
 
 	try {
+		// 0) Get lock for input socket
+		if (!server->handle_socket_lock(client_username, true, true)) {
+			throw -1;
+		}
+		
 		// 1) Receive iv
 		ret_long = receive_message(client_socket, (void**)&msg);
 		if (ret_long <= 0) {
@@ -456,12 +485,16 @@ int ServerThread::get_new_client_command (unsigned char*& msg)
 		if (e >= 1) {
 			free(iv);
 		}
+		if (e >= 0) {
+			server->handle_socket_lock(client_username, false, true);
+		}
 		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
 	}
 
 	free(tag);
 	free(ciphertext);
 	free(iv);
+	server->handle_socket_lock(client_username, false, true);
 
 	return 1;
 }
@@ -504,7 +537,12 @@ uint8_t ServerThread::get_request_type (const unsigned char* msg)
 	return (uint8_t)msg[0];
 }
 
-
+/**
+ * Execute command show: send a serialized list with all the username 
+ * of available (online) clients
+ * 
+ * @return 1 on success, -1 on failure 
+ */
 int ServerThread::execute_show ()
 {
 	// 1) Get list of client logged to the server
@@ -540,17 +578,41 @@ int ServerThread::execute_show ()
 		pos += string_size;
 	}
 
-	// 3) Send message
+	// 3) Get lock on socket output stream
+	if (!server->handle_socket_lock(client_username, true, false)) {
+		free(message);
+		return -1;
+	}
+
+	// 4) Send message
 	int ret = send_response(client_socket, (unsigned char*)message, message_len, client_key);
 	free(message);
-
 	if (ret < 0) {
+		server->handle_socket_lock(client_username, false, false);
+		return -1;
+	}
+
+	// 5) Release lock on socket output stream
+	if (!server->handle_socket_lock(client_username, false, false)) {
 		return -1;
 	}
 
 	return 1;
 }
 
+/**
+ * Execute the exit command by removing all data relative to the client
+ * 
+ * @return 1 on success, -1 if client is not present on the server 
+ */
+int ServerThread::execute_exit ()
+{
+	if (client_key != nullptr) {
+		secure_free(client_key, client_key_len);
+		client_key = nullptr;
+	}
+	return server->remove_client(client_username);
+}
 
 /**
  * Try to authenticate the client and negotiate a symmetric shared secret key,

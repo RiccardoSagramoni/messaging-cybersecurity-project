@@ -174,12 +174,12 @@ bool Server::is_client_online (const string& username)
  * Close connection with specified client
  * 
  * @param username identifier of the client
- * @return 1 on success, -1 on failure 
+ * @return 1 on success, -1 on failure (client is not logged online)
  */
-int Server::close_client (const string& username)
+int Server::remove_client (const string& username)
 {
-	// Acquire lock for reading the client data's container
-	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+	// Acquire exclusive lock for writing on the client data's container
+	lock_guard<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 	
 	connection_data* client_data;
 
@@ -192,17 +192,22 @@ int Server::close_client (const string& username)
 		return -1;
 	}
 
-	// Acquire exclusive lock for reading client's data structure
-	lock_guard<shared_timed_mutex> mutex_client_data(client_data->mutex_struct);
+	// Acquire exclusive lock for writing on client's data structure
+	client_data->mutex_struct.lock();
 
-	// Acquire lock without deadlock
-	// TODO check comment and lock
-	// ? does thread already have lock on output
-	lock(client_data->mutex_socket_in, client_data->mutex_socket_out);
-	lock_guard<mutex> l_socket_in(client_data->mutex_socket_in, adopt_lock);
-	lock_guard<mutex> l_socket_out(client_data->mutex_socket_out, adopt_lock);
-
+	// Bruteforce close the socket
 	close(client_data->socket);
+
+	// Remove key
+	#pragma optimize("", off)
+		memset((void*) client_data->key, 0, client_data->key_len);
+	#pragma optimize("", on)
+	free((void*) client_data->key);
+
+	client_data->mutex_struct.unlock();
+
+	// Remove client data
+	connected_client.erase(username);
 
 	return 1;
 }

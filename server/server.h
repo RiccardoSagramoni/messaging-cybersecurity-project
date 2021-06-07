@@ -70,7 +70,7 @@ public:
 	                     const unsigned char* key, const size_t key_len);
 	bool handle_socket_lock (const string& username, const bool lock, const bool input);
 	unsigned char* get_client_shared_key (const string& username, size_t& key_len);
-	int close_client (const string& username);
+	int remove_client (const string& username);
 	
 	// }
 	
