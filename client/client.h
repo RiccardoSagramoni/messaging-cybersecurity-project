@@ -60,7 +60,7 @@ public:
     static int send_message (const int socket, void* msg, const uint32_t msg_len);
 	static long receive_message (const int socket, void** msg);
     DH* get_dh2048();
-    int negotiate(const string& username);
+    int negotiate(const string& username, unsigned char*& session_key, size_t& session_key_len);
     EVP_PKEY* generate_key_dh();
 	EVP_PKEY* get_client_private_key();
     int receive_from_server_pub_key(EVP_PKEY*& peer_key);
@@ -73,12 +73,31 @@ public:
     X509* get_CA_certificate();
     X509_CRL* get_crl();
     int build_store_certificate_and_validate_check(X509* cert, X509_CRL* crl, X509* cert_to_ver);
-    void print_command();
     void secure_free (void* addr, size_t len);
     int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,unsigned char* aad, int aad_len,unsigned char* tag,unsigned char* key,unsigned char* iv, int iv_len,unsigned char*& plaintext, size_t& plaintext_len);
     int gcm_encrypt (unsigned char* plaintext, int plaintext_len, unsigned char* aad, int aad_len, unsigned char* key, unsigned char* iv, int iv_len, unsigned char*& ciphertext, size_t& ciphertext_len,unsigned char*& tag, size_t& tag_len);
     const EVP_CIPHER* get_authenticated_encryption_cipher();
     unsigned char* generate_iv(EVP_CIPHER const* cipher, size_t& iv_len);
+    int talk(unsigned char* session_key, size_t session_key_len);
+    int receive_response_command_to_server();
+    void print_command();
 };
+////////////////////////////////////////////////////////
+//////                   MACROS                   //////
+////////////////////////////////////////////////////////
 
+// Type of client request (1 byte) {
+	#define		TYPE_SHOW		0x00
+	#define		TYPE_TALK		0x01
+	#define		TYPE_EXIT		0x02
+// }
+
+// Type of server messages (1 byte) {
+	#define		SERVER_OK		0x00
+	#define		SERVER_ERR		0xFF
+// }
+
+// Type of errors (1 byte) {
+	#define		ERR_ALREADY_LOGGED		0x01
+// }
 #define TAG_SIZE 16

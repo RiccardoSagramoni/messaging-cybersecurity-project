@@ -135,20 +135,50 @@ long ClientThread::receive_message (const int socket, void** msg)
 void ClientThread::run()
 {
 	int ret;
+	unsigned char* session_key = nullptr;
+	size_t session_key_len = 0;
 
 	string username = client->get_username();
-    ret = negotiate(username);
+	cout<<"aaaaaa";
+	//printf((const char*)session_key);
+	//printf((const char*)session_key_len);
+    ret = negotiate(username, session_key, session_key_len);
 	if (ret < 0) return;
-	
+	printf("AAAAAAA");
+	//printf((const char*)session_key);
+	//printf((const char*)session_key_len);
 	while (true) {
-
+		/*int command=0;
+		print_command();
+		//take command from user
+		cin>>command;
+		if (command == 0) {
+			ret = talk(session_key, session_key_len);
+			if (ret < 0) {
+				cout<<"error talk()"<<endl;
+				break;
+			}
+			if (ret == 0) {
+				cout<<"no user with this name"<<endl;
+				continue;
+			}
+		}
+		else if (command == 1) {
+			
+		}
+		else if (command == 2) {
+			
+		}
+		else {
+			break;
+		}*/
 	}
 }
 
 
 
 //negotiation of key and autentication with server
-int ClientThread::negotiate(const string& username) 
+int ClientThread::negotiate(const string& username, unsigned char*& session_key, size_t& session_key_len) 
 {
     int ret;
 	X509* cert=nullptr;
@@ -163,9 +193,6 @@ int ClientThread::negotiate(const string& username)
 	char* pubkey_buf = nullptr;
 	EVP_PKEY* public_key_from_cert = nullptr;
 	unsigned char* tag = nullptr;
-
-	unsigned char* session_key = nullptr;
-	size_t session_key_len = 0;
     EVP_PKEY* peer_key = nullptr;
 	unsigned char* ciphertext = nullptr;
 	size_t ciphertext_len = 0;
@@ -1510,4 +1537,124 @@ unsigned char* ClientThread::generate_iv (EVP_CIPHER const* cipher, size_t& iv_l
 	}
 
 	return iv;
+}
+
+
+
+
+int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
+	int ret = 0;
+	unsigned char* user = nullptr;
+	size_t user_lenght = 0;
+	string user_buf;
+	unsigned char* ciphertext = nullptr;
+	size_t ciphertext_len = 0;
+	unsigned char* plaintext = nullptr;
+	size_t plaintext_len = 0;
+	string command_s = "talk";
+	unsigned char* command_u = nullptr;
+	size_t command_u_len = sizeof(command_s);
+	unsigned char* iv = nullptr;
+	size_t iv_len = 0;
+	unsigned char* tag = nullptr;
+	size_t tag_len = 0;
+	try
+	{
+
+		//get user to talk
+		cin>>user_buf;
+		if (user_buf.empty()) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "cin user failed" << endl;
+			throw 0;
+		}
+		user_lenght = sizeof(user_buf);
+		user=(unsigned char*)malloc(user_lenght+1);
+		if (!*user) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error malloc user" << endl;
+			throw 1;
+		}
+		user=(unsigned char*) user_buf.c_str();
+		command_u=(unsigned char*)malloc(command_u_len+1);
+		if (!*command_u) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error malloc command" << endl;
+			throw 2;
+		}
+		command_u=(unsigned char*) command_s.c_str();
+		//craft plaintext
+		plaintext_len = user_lenght + command_u_len + 1;
+		plaintext = (unsigned char*)malloc(plaintext_len);
+		if (!plaintext) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error craft message" << endl;
+			throw 3;
+		}
+
+		memcpy(plaintext, command_u, command_u_len);
+		memcpy(plaintext + command_u_len, user, user_lenght);
+		plaintext[plaintext_len - 1] = '\0';
+
+		//generate iv
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
+		if (!iv) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "generate_iv failed" << endl;
+			throw 4;
+		}
+		//encrypt message
+		ret = gcm_encrypt(plaintext, plaintext_len, iv, iv_len, session_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
+		if (ret!=0) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error encryption" << endl;
+			throw 4;
+		}
+		//send ciphertext
+		ret = send_message(main_server_socket, (void*)ciphertext, ciphertext_len);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error sending command" << endl;
+			throw 4;
+		}
+
+	} catch (int e) {
+		if (e >= 4) {
+			secure_free(iv, iv_len);
+			secure_free(tag, tag_len);
+			secure_free(ciphertext, ciphertext_len);
+		}
+		if (e >= 3) {
+			secure_free(plaintext, plaintext_len);
+		}
+		if (e >= 2) {
+			secure_free(command_u, command_u_len);
+		}
+		if (e >= 1) {
+			secure_free(user, user_lenght);
+		}
+		return -1;
+	}
+
+	secure_free(user, user_lenght);
+	secure_free(command_u, command_u_len);
+	secure_free(plaintext, plaintext_len);
+	secure_free(iv, iv_len);
+	secure_free(tag, tag_len);
+	secure_free(ciphertext, ciphertext_len);
+
+	return 1;
+	
+	
+	
+	
+}
+int ClientThread::receive_response_command_to_server() {
+
+}
+void ClientThread::print_command() {
+	cout<<"Select command:"<<endl;
+	cout<<"0 : talk"<<endl;
+	cout<<"1 : show"<<endl;
+	cout<<"2 : exit"<<endl;
 }
