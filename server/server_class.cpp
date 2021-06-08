@@ -157,20 +157,6 @@ list<string> Server::get_available_clients_list ()
 }
 
 /**
- * Check is a specified client is currently online (logged on the server)
- * 
- * @param username identifier of client
- * @return true if the client is online, false otherwise 
- */
-bool Server::is_client_online (const string& username)
-{
-	// Acquire lock for reading the client data's container
-	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
-
-	return (connected_client.count(username) != 0);
-}
-
-/**
  * Close connection with specified client
  * 
  * @param username identifier of the client
@@ -231,8 +217,8 @@ unsigned char* Server::get_client_shared_key (const string& username, size_t& ke
 	// Fails if there is no associated data.
 	try {
 		client_data = connected_client.at(username);
-	}
-	catch (const out_of_range& ex) {
+
+	} catch (const out_of_range& ex) {
 		cerr << "[Thread " << this_thread::get_id() << "] Server::get_client_shared_key: "
 		<< "username " << username << " is not logged" << endl;
 		return nullptr;
@@ -254,3 +240,52 @@ unsigned char* Server::get_client_shared_key (const string& username, size_t& ke
 	return key;
 }
 
+/**
+ * Prepare the structures for starting a message conversation between two clients.
+ * Check if the peer user is online and available to talk, extract his key and 
+ * lock the output stream of the socket
+ * 
+ * @param username id of the peer user
+ * @param key on success it will point to the newly-allocated key
+ * @param key_len key length
+ * @return 1 on success, -2 if the user isn't online, -3 if the user isn't available to talk,
+ * -1 if any other error occurs
+ */
+int Server::start_talking (const string& username, unsigned char*& key, size_t& key_len)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(username);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::start_talking: "
+		<< "username " << username << " is not logged" << endl;
+		return -2;
+	}
+
+	// Check if the client is available to talk
+	shared_lock<shared_timed_mutex> mutex_client(client_data->mutex_struct);
+	if (!client_data->available) {
+		return -3;
+	}
+
+	// Copy shared key with client
+	if (!client_data->key) {
+		return -1;
+	}
+	key_len = client_data->key_len;
+	key = (unsigned char*)malloc(key_len);
+	if (!key) {
+		return -1;
+	}
+	memcpy(key, client_data->key, key_len);
+
+	client_data->mutex_socket_out.lock();
+
+	return client_data->socket;
+}
