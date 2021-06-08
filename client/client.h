@@ -16,6 +16,7 @@
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <list>
 
 #define LENGTH 2048
 
@@ -81,6 +82,9 @@ public:
     int talk(unsigned char* session_key, size_t session_key_len);
     int receive_response_command_to_server();
     void print_command();
+    int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
+    int show(const string& username, unsigned char* shared_key);
+    uint8_t get_request_type(const unsigned char* msg);
 };
 ////////////////////////////////////////////////////////
 //////                   MACROS                   //////
