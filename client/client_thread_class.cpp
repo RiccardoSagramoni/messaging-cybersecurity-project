@@ -412,7 +412,6 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 			<< "error derive session key" << endl;
 			throw 2;
 		}
-
 		//receive iv (initialization vector)
 		ret = receive_message(main_server_socket, (void**)&iv);
 		if (ret <= 0) {
@@ -516,7 +515,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 			secure_free(ciphertext, ciphertext_len);
 		}
 		if (e >= 3) {
-			secure_free(session_key, session_key_len);
+			//secure_free(session_key, session_key_len);
 		}
 		if (e >= 2) {
 			BIO_free(mbio);
@@ -530,7 +529,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 	free(iv);
 	secure_free(ser_certificate, ser_certificate_len);
 	secure_free(ciphertext, ciphertext_len); // ? bug
-	secure_free(session_key, session_key_len);
+	//secure_free(session_key, session_key_len);
 	BIO_free(mbio);
 	free(username_c);
 	return 1;
