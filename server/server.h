@@ -95,7 +95,7 @@ public:
 
 	// }
 
-	int start_talking (const string& username, unsigned char*& key, size_t& key_len);
+	int prepare_for_talking (const string& username, unsigned char*& key, size_t& key_len);
 	int wait_start_talk (const string& user_dest, const string& user_src);
 	int wait_end_talk (const string& user);
 	int notify_start_talk (const string& wanted_user, const string asking_user);
@@ -177,6 +177,7 @@ class ServerThread {
 
 	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key);
 	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
+	int send_talk_notification_to_first_client();
 
 	// }
 

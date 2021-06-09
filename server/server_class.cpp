@@ -279,7 +279,7 @@ unsigned char* Server::get_client_shared_key (const string& username, size_t& ke
  * @return 1 on success, -2 if the user isn't online, -3 if the user isn't available to talk,
  * -1 if any other error occurs
  */
-int Server::start_talking (const string& username, unsigned char*& key, size_t& key_len)
+int Server::prepare_for_talking (const string& username, unsigned char*& key, size_t& key_len)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -291,7 +291,7 @@ int Server::start_talking (const string& username, unsigned char*& key, size_t& 
 		client_data = connected_client.at(username);
 
 	} catch (const out_of_range& ex) {
-		cerr << "[Thread " << this_thread::get_id() << "] Server::start_talking: "
+		cerr << "[Thread " << this_thread::get_id() << "] Server::prepare_for_talking: "
 		<< "username " << username << " is not logged" << endl;
 		return -2;
 	}
@@ -325,7 +325,7 @@ int Server::start_talking (const string& username, unsigned char*& key, size_t& 
  * // TODO
  * @param wanted_user 
  * @param asking_user 
- * @return int 
+ * @return 1 on success, -1 on failure 
  */
 int Server::wait_start_talk (const string& wanted_user, const string& asking_user)
 {
@@ -344,18 +344,15 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 		return -1;
 	}
 
-	// Acquire lock for reading available state
-	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
-	
 	// Check if client is already unavailable
+	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
 	if (!client_data->available) {
 		return -1;
 	}
 	mutex_available.unlock();
 
-	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
-
 	// Wait until the "wanted" client have chosen an interlocutor
+	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
 	while (!client_data->has_chosen_interlocutor) {
 		client_data->ready_to_talk_cv.wait(talk_lock);
 	}
