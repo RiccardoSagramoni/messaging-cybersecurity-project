@@ -172,13 +172,13 @@ void ClientThread::run()
 
 
 
-
+//send a message type || size username || username
 int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shared_key) {
 	int ret = 0;
 	unsigned char* iv = nullptr;
 	unsigned char* ciphertext = nullptr;
 	unsigned char* tag = nullptr;
-	size_t msg_len;
+	size_t msg_len=sizeof(msg);
 	size_t iv_len = 0;
 	size_t tag_len = 0;
 	size_t ciphertext_len = 0;
@@ -197,7 +197,7 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 			<< "failed to crypt" << endl;
 			throw 2;
 		}
-		secure_free(msg, msg_len);
+		//secure_free(msg, msg_len);
 
 		//Send messages
 		//Send iv
@@ -209,7 +209,7 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 		}
 		
 		//Send crypted msg
-		ret = send_message(main_server_socket, (void*)msg, msg_len);
+		ret = send_message(main_server_socket, (void*)ciphertext, ciphertext_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
 			<< "send_message encrypted_msg" << endl;
@@ -238,29 +238,33 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 	free(iv);
 	return 1;
 }
-
+//for showing list of username
 int ClientThread::show(const string& username, unsigned char* shared_key) {
 	list<string> l;
 	size_t message_len = 1;
 	uint32_t string_size = username.length() + 1;
-	message_len = string_size;
+	message_len = string_size + 1;
 	unsigned char* msg_received = nullptr;
 	size_t msg_received_len = 0;
 	long ret_long = -1;
 	unsigned char* iv = nullptr;
 	unsigned char* ciphertext = nullptr;
 	unsigned char* tag = nullptr;
+	size_t tag_len=0;
+	size_t ciphertext_len = 0;
+	size_t iv_len=0;
 
 	//Allocate message
 	char* message = (char*)malloc(message_len);
 	if (!message) {
 		return -1;
 	}
+	//forge message type || size username || username
 	uint8_t* type = (uint8_t*)&message[0];
 	*type = TYPE_SHOW;
 	string_size = htonl(string_size);
 	memcpy(message + 1, &string_size, sizeof(string_size));
-	memcpy(message + sizeof(string_size) +1, username.c_str(), string_size);
+	memcpy(message + 5, username.c_str(), username.length());
 	int ret = send_command_to_server((unsigned char*)message, shared_key);
 	free(message);
 	if (ret != 1) {
@@ -272,19 +276,19 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 		if (ret_long <= 0) {
 			throw 0;
 		}
-		size_t iv_len = ret_long;
+		iv_len = ret_long;
 		// 2) Receive ciphertext
 		ret_long = receive_message(main_server_socket, (void**)&ciphertext);
 		if (ret_long <= 0) {
 			throw 1;
 		}
-		size_t ciphertext_len = ret_long;
+		ciphertext_len = ret_long;
 		// 3) Receive tag
 		ret_long = receive_message(main_server_socket, (void**)&tag);
 		if (ret_long <= 0) {
 			throw 2;
 		}
-		size_t tag_len = ret_long;
+		tag_len = ret_long;
 		// 4) Decrypt message
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg_received, msg_received_len);
 		if (ret < 0) {
@@ -302,14 +306,14 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 		}
 		return -1;
 	}
-	free(tag);
-	free(ciphertext);
-	free(iv);
+	secure_free(tag, tag_len);
+	secure_free(ciphertext, ciphertext_len);
+	secure_free(iv, iv_len);
 	uint8_t request_type = get_request_type(msg_received);
 	if (request_type == SERVER_ERR) {
 		return -1;
 	}
-	//TODO print username
+	//TODO print usernames list
 	return 1;
 }
 
