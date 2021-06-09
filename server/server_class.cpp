@@ -145,8 +145,10 @@ list<string> Server::get_available_clients_list ()
 
 	list<string> l;
 
+	// Search for available users
 	for (auto i : connected_client) {
 		shared_lock<shared_timed_mutex> mutex_lock(i.second->mutex_struct);
+		shared_lock<shared_timed_mutex> available_lock(i.second->mutex_available);
 		
 		if (i.second->available) {
 			l.push_back(i.first);
@@ -154,6 +156,42 @@ list<string> Server::get_available_clients_list ()
 	}
 
 	return l;
+}
+
+/**
+ * Set availability to talk of a specified client
+ * 
+ * @param username id of user
+ * @param status new available status
+ * 
+ * @return 1 on success, -1 on failure
+ */
+int Server::set_available_status (const string& username, const bool status)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Get client data associated with given username.
+	// Fails if there is no associated data.
+	try {
+		client_data = connected_client.at(username);
+	}
+	catch (const out_of_range& ex) {
+		return -1;
+	}
+
+	// Acquire exclusive lock for writing on data structure and set available status
+	shared_lock<shared_timed_mutex> mutex_client_data(client_data->mutex_struct);
+	lock_guard<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	
+	if (client_data->available == status) {
+		return 0;
+	}
+	client_data->available = status;
+
+	return 1;
 }
 
 /**
@@ -270,6 +308,7 @@ int Server::start_talking (const string& username, unsigned char*& key, size_t& 
 
 	// Check if the client is available to talk
 	shared_lock<shared_timed_mutex> mutex_client(client_data->mutex_struct);
+	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
 	if (!client_data->available) {
 		return -3;
 	}
@@ -288,4 +327,49 @@ int Server::start_talking (const string& username, unsigned char*& key, size_t& 
 	client_data->mutex_socket_out.lock();
 
 	return client_data->socket;
+}
+
+/**
+ * // TODO
+ * @param wanted_user 
+ * @param asking_user 
+ * @return int 
+ */
+int Server::wait_talk_response (const string& wanted_user, const string& asking_user)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(wanted_user);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_talk_response: "
+		<< "username " << wanted_user << " is not logged" << endl;
+		return -1;
+	}
+
+	// Acquire lock for reading on client data structure
+	shared_lock<shared_timed_mutex> mutex_client_data(client_data->mutex_struct);
+	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	
+	// Check if client is already unavailable
+	if (!client_data->available) {
+		return -1;
+	}
+
+	// Wait until the "wanted" client have chosen an interlocutor
+	while (!client_data->has_chosen_interlocutor) {
+		unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
+		client_data->ready_to_talk_cv.wait(talk_lock);
+	}
+
+	if (0 != asking_user.compare(client_data->interlocutor_user)) {
+		return -1;
+	}
+
+	return 1;
 }

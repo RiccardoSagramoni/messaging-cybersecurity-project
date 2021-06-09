@@ -24,16 +24,23 @@
 using namespace std;
 
 struct connection_data {
-	shared_timed_mutex mutex_struct;
+	shared_timed_mutex mutex_struct; // TODO ridondante?
 	
 	const int socket;
 	mutex mutex_socket_out;
 	mutex mutex_socket_in;
 
 	bool available = true;
+	shared_timed_mutex mutex_available;
+
+	condition_variable ready_to_talk_cv;
+	mutex ready_to_talk_mutex;
+	bool has_chosen_interlocutor = false;
+	string interlocutor_user = "";
 	
 	const unsigned char* key;
 	const size_t key_len;
+	shared_timed_mutex mutex_key;
 
 	connection_data(const int _socket, const unsigned char* _key, const size_t _key_len) : 
 		socket(_socket), key(_key), key_len(_key_len)
@@ -77,11 +84,12 @@ public:
 	// Functions that monitor current status of client connections {
 	
 	list<string> get_available_clients_list ();
-	bool is_client_online (const string& username);
+	int set_available_status (const string& username, const bool status);
 
 	// }
 
 	int start_talking (const string& username, unsigned char*& key, size_t& key_len);
+	int wait_talk_response (const string& user_dest, const string& user_src);
 };
 
 
@@ -158,7 +166,7 @@ class ServerThread {
 	bool check_username_validity(const string& username);
 
 	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key);
-	int wait_answer_to_request_to_talk (const int socket, const unsigned char* key);
+	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
 
 	// }
 

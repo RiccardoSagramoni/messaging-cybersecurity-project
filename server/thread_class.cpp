@@ -625,56 +625,115 @@ int ServerThread::execute_show ()
 	return 1;
 }
 
+/**
+ * // TODO
+ * @param msg 
+ * @param msg_len 
+ * @return int 
+ */
 int ServerThread::execute_talk (const unsigned char* msg, size_t msg_len)
 {
 	int ret;
-	
-	// 1) Check is msg is valid (is a null terminated string)
-	if (msg[msg_len - 1] != '\0' || msg_len <= sizeof(uint32_t) + 1) {
-		// TODO send_error()
-		return -1;
-	}
 
-	// Deserialize length of username
-	uint32_t peer_username_len = ntohl(*(uint32_t*)(msg + 1));
-
-	if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
-		// TODO send_error()
-		return -1;
-	}
-
-	// 2) Extract peer's username and convert it to string
-	char* peer_username_c = (char*)(msg + 1 + sizeof(uint32_t));
-	string peer_username = peer_username_c;
-
-	// 3) 
+	string peer_username;
 	unsigned char* peer_key;
 	size_t peer_key_len;
-	ret = server->start_talking(peer_username, peer_key, peer_key_len);
-	if (ret < 0) {
-		// TODO error
+	
+	try {
+		// 1) Make client user unavailable
+		ret = server->set_available_status(client_username, false);
+		if (ret < 0) {
+			throw 0;
+		}
+
+		// 2) Check is msg is valid (is a null terminated string)
+		if (msg[msg_len - 1] != '\0' || msg_len <= sizeof(uint32_t) + 1) {
+			// TODO send_error()
+			throw 1;
+		}
+
+		// Deserialize length of username
+		uint32_t peer_username_len = ntohl(*(uint32_t*)(msg + 1));
+
+		if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
+			// TODO send_error()
+			throw 1;
+		}
+
+		// 2) Extract peer's username and convert it to string
+		char* peer_username_c = (char*)(msg + 1 + sizeof(uint32_t));
+		peer_username = peer_username_c;
+
+		// 3) 
+		ret = server->start_talking(peer_username, peer_key, peer_key_len);
+		if (ret < 0) {
+			// TODO error
+			throw 1;
+		}
+		int peer_socket = ret;
+
+		// 4) Send request to talk
+		ret = send_request_to_talk(peer_socket, client_username, peer_key);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// 5) Wait for peer answer
+		ret = wait_answer_to_request_to_talk(peer_socket, peer_username, peer_key);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// Set peer client as unavailable to talk
+		ret = server->set_available_status(peer_username, false);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// Lock peer's socket both for input and output
+		if(!server->handle_socket_lock(peer_username, true, true)) {
+			throw 3;
+		}
+		if (!server->handle_socket_lock(peer_username, true, false)) {
+			throw 4;
+		}
+
+		// 6) Notify first client
+
+		// 7) Execute DH protocol between clients
+
+		// 8) Start sending
+
+	} catch (int e) {
+		if (e >= 5) {
+			server->handle_socket_lock(peer_username, false, false);
+		}
+		if (e >= 4) {
+			server->handle_socket_lock(peer_username, false, true);
+		}
+		if (e >= 3) {
+			server->set_available_status(peer_username, true);
+		}
+		if (e >= 2) {
+			secure_free(peer_key, peer_key_len);
+		}
+		if (e >= 1) {
+			server->set_available_status(client_username, true);
+		}
+
 		return -1;
 	}
-
-	int peer_socket = ret;
-
-	// 4) Send request to talk
-	ret = send_request_to_talk(peer_socket, peer_username, peer_key);
-	if (ret < 0) {
-		return -1;
-	}
-
-	// 5) Wait for peer answer
-
-	// 6) Notify first client
-
-	// 7) Execute DH protocol between clients
-
-	// 8) Start sending
 
 	return 1;
 }
 
+/**
+ * // TODO
+ * @param socket 
+ * @param from_user 
+ * @param key 
+ * @return int 
+ */
 int ServerThread::send_request_to_talk (const int socket, const string& from_user, const unsigned char* key)
 {
 	int ret;
@@ -704,13 +763,19 @@ int ServerThread::send_request_to_talk (const int socket, const string& from_use
 	return 1;
 }
 
-int ServerThread::wait_answer_to_request_to_talk (const int socket, const unsigned char* key)
+/**
+ * // TODO
+ * @param socket 
+ * @param key 
+ * @return int 
+ */
+int ServerThread::wait_answer_to_request_to_talk (const int socket, const string& peer_username, const unsigned char* key)
 {
 	int ret;
 
-	// Message ACCEPT_TALK
-	//receive_message() 
-	// TODO here!
+	server->wait_talk_response(peer_username, client_username);
+
+	return 1;
 }
 
 /**
