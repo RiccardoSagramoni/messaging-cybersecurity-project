@@ -773,7 +773,7 @@ int ServerThread::wait_answer_to_request_to_talk (const int socket, const string
 {
 	int ret;
 
-	server->wait_talk_response(peer_username, client_username);
+	server->wait_start_talk(peer_username, client_username);
 
 	return 1;
 }

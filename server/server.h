@@ -24,20 +24,27 @@
 using namespace std;
 
 struct connection_data {
-	shared_timed_mutex mutex_struct; // TODO ridondante?
-	
+	// Socket
 	const int socket;
 	mutex mutex_socket_out;
 	mutex mutex_socket_in;
 
+	// Available status
 	bool available = true;
 	shared_timed_mutex mutex_available;
 
+	// Variable for starting a talk
 	condition_variable ready_to_talk_cv;
 	mutex ready_to_talk_mutex;
 	bool has_chosen_interlocutor = false;
 	string interlocutor_user = "";
+
+	// Wait for the end of talk
+	condition_variable end_talk_cv;
+	mutex end_talk_mutex;
+	bool is_talk_ended = false;
 	
+	// Shared symmetric key
 	const unsigned char* key;
 	const size_t key_len;
 	shared_timed_mutex mutex_key;
@@ -89,7 +96,10 @@ public:
 	// }
 
 	int start_talking (const string& username, unsigned char*& key, size_t& key_len);
-	int wait_talk_response (const string& user_dest, const string& user_src);
+	int wait_start_talk (const string& user_dest, const string& user_src);
+	int wait_end_talk (const string& user);
+	int notify_start_talk (const string& wanted_user, const string asking_user);
+	int notify_end_talk (const string& user);
 };
 
 
