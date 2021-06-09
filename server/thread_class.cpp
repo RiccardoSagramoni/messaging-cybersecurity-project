@@ -1878,9 +1878,16 @@ int ServerThread::execute_talk (const unsigned char* msg, size_t msg_len)
 		}
 
 		// 7) Execute DH protocol between clients
-		ret = negotiate_key_between_clients (peer_socket, peer_key);
+		ret = negotiate_key_between_clients(peer_socket, peer_key);
+		if (ret != 1) {
+			throw 6;
+		}
 
-		// 8) Start sending
+		// 8) Start talking
+		ret = talk_between_clients(peer_socket, peer_key);
+		if (ret != 1) {
+			throw 6;
+		}
 
 	} catch (int e) {
 		if (e >= 7) {

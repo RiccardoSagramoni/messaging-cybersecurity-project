@@ -212,7 +212,9 @@ int Server::remove_client (const string& username)
 	}
 
 	// Bruteforce close the socket
-	close(client_data->socket);
+	if (shutdown(client_data->socket, SHUT_RDWR) >= 0) {
+		close(client_data->socket);
+	}
 
 	// Remove key
 	#pragma optimize("", off)

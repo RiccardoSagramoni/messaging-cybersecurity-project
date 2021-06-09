@@ -179,6 +179,7 @@ class ServerThread {
 	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
 	int send_notification_for_accepted_talk_request();
 	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key);
+	int talk_between_clients (const int peer_socket, const unsigned char* peer_key);
 
 	// }
 
