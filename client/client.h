@@ -90,6 +90,7 @@ public:
     uint8_t get_request_type(const unsigned char* msg);
     int send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
     int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key);
+    int exit_by_application(unsigned char* shared_key);
 };
 
 

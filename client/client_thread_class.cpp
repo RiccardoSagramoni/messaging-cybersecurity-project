@@ -145,6 +145,7 @@ void ClientThread::run()
 		string command;
 		print_command();
 		//take command from user
+		cout<<"insert command:  ";
 		cin>>command;
 		if (command == "0") {
 			ret = talk(session_key, session_key_len);
@@ -158,10 +159,25 @@ void ClientThread::run()
 			}
 		}
 		else if (command == "1") {
-			show(username, session_key);
+			ret = show(username, session_key);
+			if (ret < 0) {
+				cout<<"error show()"<<endl;
+				break;
+			}
+			if (ret == 0) {
+				cout<<"other errors"<<endl; //TODO
+				continue;
+			}
 		}
 		else if (command == "2") {
-			
+			ret = exit_by_application(session_key);
+			if (ret != 1) {
+				cout<<"error exit_by_application()"<<endl;
+				break;
+			}
+			cout<<"Bye!!"<<endl;
+			secure_free(session_key,session_key_len);
+			break;
 		}
 		else {
 			break;
@@ -182,6 +198,7 @@ int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
 	{
 
 		//get user to talk
+		cout<<"insert username of the client:  ";
 		cin>>user_buf;
 		if (user_buf.empty()) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
@@ -370,7 +387,7 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 		if (ret <= 0) {
 				cerr << "[Thread " << this_thread::get_id() << "] show: "
 				<< "error send message to server" << endl;
-				throw 3;
+				throw 1;
 		}
 		secure_free(message, message_len);
 		//receive response by server
@@ -378,10 +395,10 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] show: "
 			<< "error receive response" << endl;
-			throw 3;
+			throw 1;
 		}
 	} catch (int e) {
-		if (e >= 3) {
+		if (e >= 1) {
 			secure_free(msg_received, msg_received_len);
 		}
 		return -1;
@@ -396,6 +413,34 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 
 	secure_free(msg_received, msg_received_len);
 
+	return 1;
+}
+
+int ClientThread::exit_by_application(unsigned char* shared_key) {
+	size_t message_len = 1;
+	//Allocate message
+	char* message = (char*)malloc(message_len);
+	if (!message) {
+		return -1;
+	}
+	//forge message type
+	uint8_t* type = (uint8_t*)&message[0];
+	*type = TYPE_EXIT;
+	try {
+		//send message to server
+		int ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, shared_key);
+		if (ret <= 0) {
+				cerr << "[Thread " << this_thread::get_id() << "] exit_by_application: "
+				<< "error send message to server" << endl;
+				throw 1;
+		}
+		secure_free(message, message_len);
+	} catch (int e) {
+		if (e >= 1) {
+			secure_free(message, message_len);
+		}
+		return -1;
+	}
 	return 1;
 }
 
