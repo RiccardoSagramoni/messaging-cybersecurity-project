@@ -458,7 +458,6 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		if (ret_long <= 0) {
 			throw 2;
 		}
-cout<<client_key<<endl;
 		// 4) Decrypt message
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, client_key, 
 		                      iv, iv_len, msg, msg_len);

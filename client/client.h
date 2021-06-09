@@ -88,7 +88,12 @@ public:
     int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
     int show(const string& username, unsigned char* shared_key);
     uint8_t get_request_type(const unsigned char* msg);
+    int send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
+    int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key);
 };
+
+
+
 ////////////////////////////////////////////////////////
 //////                   MACROS                   //////
 ////////////////////////////////////////////////////////
@@ -97,14 +102,22 @@ public:
 	#define		TYPE_SHOW		0x00
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
+	#define 	ACCEPT_TALK		0x03
+
+	#define 	CLIENT_ERROR	0xFF
 // }
 
 // Type of server messages (1 byte) {
 	#define		SERVER_OK		0x00
 	#define		SERVER_ERR		0xFF
+	#define 	SERVER_REQUEST_TO_TALK	0x01
 // }
 
 // Type of errors (1 byte) {
 	#define		ERR_ALREADY_LOGGED		0x01
+	#define		ERR_WRONG_TYPE			0x02
+
+	#define 	ERR_GENERIC				0xFF
 // }
+
 #define TAG_SIZE 16

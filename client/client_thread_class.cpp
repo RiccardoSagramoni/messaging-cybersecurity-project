@@ -169,8 +169,110 @@ void ClientThread::run()
 	}
 }
 
+//for send a request to talk to another client
+int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
+	int ret = 0;
+	char* message = nullptr;
+	size_t message_len = 1;
+	uint32_t user_lenght = 0;
+	string user_buf;
+	unsigned char* plaintext = nullptr;
+	size_t plaintext_len = 0;
+	try
+	{
+
+		//get user to talk
+		cin>>user_buf;
+		if (user_buf.empty()) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "cin user failed" << endl;
+			throw 0;
+		}
 
 
+
+
+		message_len += user_buf.length() + 1;
+		//allocate msg
+		message = (char*)malloc(message_len);
+		if (!*message) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error malloc username" << endl;
+			throw 2;
+		}
+
+		//craft msg
+		uint8_t* type = (uint8_t*)&message[0];
+		*type = TYPE_TALK;
+		size_t pos = 1;
+
+		uint32_t string_size = user_buf.length() + 1;
+
+		string_size = htonl(string_size);
+		memcpy(message + 1, &string_size, sizeof(string_size));
+		memcpy(message + 5, user_buf.c_str(), user_buf.length());
+
+
+
+		if (!message) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error memcpy message" << endl;
+			throw 3;
+		}
+		message[message_len - 1] = '\0';
+
+		//send messsage to server
+
+		ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, session_key);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "erro send message to server" << endl;
+			throw 4;
+		}
+
+		//receive ok by server
+
+		ret = receive_plaintext(main_server_socket, plaintext, plaintext_len, session_key);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error receive response" << endl;
+			throw 4;
+		}
+		
+
+	} catch (int e) {
+		if (e >= 4) {
+			secure_free(plaintext, plaintext_len);
+		}
+		if (e >= 3) {
+			secure_free(message, message_len);
+		}
+		return -1;
+	}
+
+
+	
+	secure_free(message, message_len);
+
+
+
+	uint8_t request_type = get_request_type(plaintext);
+	if (request_type == SERVER_ERR) {
+		return -1;
+	}
+
+
+
+	//DH with another client
+
+	secure_free(plaintext, plaintext_len);
+
+	return 1;
+	
+	
+	
+	
+}
 
 //send a message type || size username || username
 int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shared_key) {
@@ -238,12 +340,12 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 	free(iv);
 	return 1;
 }
+
 //for showing list of username
 int ClientThread::show(const string& username, unsigned char* shared_key) {
 	list<string> l;
 	size_t message_len = 1;
 	uint32_t string_size = username.length() + 1;
-	message_len = string_size + 1;
 	unsigned char* msg_received = nullptr;
 	size_t msg_received_len = 0;
 	long ret_long = -1;
@@ -259,61 +361,41 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 	if (!message) {
 		return -1;
 	}
-	//forge message type || size username || username
+	//forge message type
 	uint8_t* type = (uint8_t*)&message[0];
 	*type = TYPE_SHOW;
-	string_size = htonl(string_size);
-	memcpy(message + 1, &string_size, sizeof(string_size));
-	memcpy(message + 5, username.c_str(), username.length());
-	int ret = send_command_to_server((unsigned char*)message, shared_key);
-	free(message);
-	if (ret != 1) {
-		return -1;
-	}
 	try {
-		// 1) Receive iv
-		ret_long = receive_message(main_server_socket, (void**)&iv);
-		if (ret_long <= 0) {
-			throw 0;
+		//send message to server
+		int ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, shared_key);
+		if (ret <= 0) {
+				cerr << "[Thread " << this_thread::get_id() << "] show: "
+				<< "error send message to server" << endl;
+				throw 3;
 		}
-		iv_len = ret_long;
-		// 2) Receive ciphertext
-		ret_long = receive_message(main_server_socket, (void**)&ciphertext);
-		if (ret_long <= 0) {
-			throw 1;
-		}
-		ciphertext_len = ret_long;
-		// 3) Receive tag
-		ret_long = receive_message(main_server_socket, (void**)&tag);
-		if (ret_long <= 0) {
-			throw 2;
-		}
-		tag_len = ret_long;
-		// 4) Decrypt message
-		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg_received, msg_received_len);
-		if (ret < 0) {
+		secure_free(message, message_len);
+		//receive response by server
+		ret = receive_plaintext(main_server_socket, msg_received, msg_received_len, shared_key);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] show: "
+			<< "error receive response" << endl;
 			throw 3;
 		}
 	} catch (int e) {
 		if (e >= 3) {
-			free(tag);
-		}
-		if (e >= 2) {
-			free(ciphertext);
-		}
-		if (e >= 1) {
-			free(iv);
+			secure_free(msg_received, msg_received_len);
 		}
 		return -1;
 	}
-	secure_free(tag, tag_len);
-	secure_free(ciphertext, ciphertext_len);
-	secure_free(iv, iv_len);
 	uint8_t request_type = get_request_type(msg_received);
 	if (request_type == SERVER_ERR) {
 		return -1;
 	}
 	//TODO print usernames list
+
+
+
+	secure_free(msg_received, msg_received_len);
+
 	return 1;
 }
 
@@ -1688,113 +1770,7 @@ unsigned char* ClientThread::generate_iv (EVP_CIPHER const* cipher, size_t& iv_l
 
 
 
-int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
-	int ret = 0;
-	unsigned char* user = nullptr;
-	size_t user_lenght = 0;
-	string user_buf;
-	unsigned char* ciphertext = nullptr;
-	size_t ciphertext_len = 0;
-	unsigned char* plaintext = nullptr;
-	size_t plaintext_len = 0;
-	string command_s = "talk";
-	unsigned char* command_u = nullptr;
-	size_t command_u_len = sizeof(command_s);
-	unsigned char* iv = nullptr;
-	size_t iv_len = 0;
-	unsigned char* tag = nullptr;
-	size_t tag_len = 0;
-	try
-	{
 
-		//get user to talk
-		cin>>user_buf;
-		if (user_buf.empty()) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "cin user failed" << endl;
-			throw 0;
-		}
-		user_lenght = sizeof(user_buf);
-		user=(unsigned char*)malloc(user_lenght+1);
-		if (!*user) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error malloc user" << endl;
-			throw 1;
-		}
-		user=(unsigned char*) user_buf.c_str();
-		command_u=(unsigned char*)malloc(command_u_len+1);
-		if (!*command_u) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error malloc command" << endl;
-			throw 2;
-		}
-		command_u=(unsigned char*) command_s.c_str();
-		//craft plaintext
-		plaintext_len = user_lenght + command_u_len + 1;
-		plaintext = (unsigned char*)malloc(plaintext_len);
-		if (!plaintext) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error craft message" << endl;
-			throw 3;
-		}
-
-		memcpy(plaintext, command_u, command_u_len);
-		memcpy(plaintext + command_u_len, user, user_lenght);
-		plaintext[plaintext_len - 1] = '\0';
-
-		//generate iv
-		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
-		if (!iv) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "generate_iv failed" << endl;
-			throw 4;
-		}
-		//encrypt message
-		ret = gcm_encrypt(plaintext, plaintext_len, iv, iv_len, session_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
-		if (ret!=0) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error encryption" << endl;
-			throw 4;
-		}
-		//send ciphertext
-		ret = send_message(main_server_socket, (void*)ciphertext, ciphertext_len);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error sending command" << endl;
-			throw 4;
-		}
-
-	} catch (int e) {
-		if (e >= 4) {
-			secure_free(iv, iv_len);
-			secure_free(tag, tag_len);
-			secure_free(ciphertext, ciphertext_len);
-		}
-		if (e >= 3) {
-			secure_free(plaintext, plaintext_len);
-		}
-		if (e >= 2) {
-			secure_free(command_u, command_u_len);
-		}
-		if (e >= 1) {
-			secure_free(user, user_lenght);
-		}
-		return -1;
-	}
-
-	secure_free(user, user_lenght);
-	secure_free(command_u, command_u_len);
-	secure_free(plaintext, plaintext_len);
-	secure_free(iv, iv_len);
-	secure_free(tag, tag_len);
-	secure_free(ciphertext, ciphertext_len);
-
-	return 1;
-	
-	
-	
-	
-}
 int ClientThread::receive_response_command_to_server() {
 
 }
@@ -1803,4 +1779,124 @@ void ClientThread::print_command() {
 	cout<<"0 : talk"<<endl;
 	cout<<"1 : show"<<endl;
 	cout<<"2 : exit"<<endl;
+}
+
+
+
+
+
+int ClientThread::send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key)
+{
+	int ret;
+
+	unsigned char* iv = nullptr;
+	size_t iv_len = 0;
+	unsigned char* ciphertext = nullptr;
+	size_t ciphertext_len = 0;
+	unsigned char* tag = nullptr;
+	size_t tag_len = 0;
+
+	try {
+		// 1) Generate IV
+		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
+		if (!iv) {
+			throw 0;
+		}
+
+		// 2) Encrypt message
+		ret = gcm_encrypt(msg, msg_len, iv, iv_len, key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
+		if (ret < 0) {
+			throw 1;
+		}
+
+		// 3) Send iv
+		ret = send_message(socket, (void*)iv, iv_len);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// 4) Send message
+		ret = send_message(socket, (void*)ciphertext, ciphertext_len);
+		if (ret < 0) {
+			throw 2;
+		}
+
+		// 5) Send tag
+		ret = send_message(socket, (void*)tag, tag_len);
+		if (ret < 0) {
+			throw 2;
+		}
+
+	} catch (int e) {
+		if (e >= 2) {
+			free(ciphertext);
+			free(tag);
+		}
+		if (e >= 1) {
+			free(iv);
+		}
+		return -1;
+	}
+
+	free(ciphertext);
+	free(tag);
+	free(iv);
+
+	return 1;
+}
+
+int ClientThread::receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key)
+{
+	long ret_long = -1;
+	
+	unsigned char* iv = nullptr;
+	unsigned char* ciphertext = nullptr;
+	unsigned char* tag = nullptr;
+
+	try {
+		// 1) Receive iv
+		ret_long = receive_message(main_server_socket, (void**)&iv);
+		if (ret_long <= 0) {
+			throw 0;
+		}
+		size_t iv_len = ret_long;
+
+		// 2) Receive ciphertext
+		ret_long = receive_message(main_server_socket, (void**)&ciphertext);
+		if (ret_long <= 0) {
+			throw 1;
+		}
+		size_t ciphertext_len = ret_long;
+
+		// 3) Receive tag
+		ret_long = receive_message(main_server_socket, (void**)&tag);
+		if (ret_long <= 0) {
+			throw 2;
+		}
+
+		// 4) Decrypt message
+		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, 
+		                      iv, iv_len, msg, msg_len);
+		if (ret < 0) {
+			throw 3;
+		}
+	
+	} catch (int e) {
+		if (e >= 3) {
+			free(tag);
+		}
+		if (e >= 2) {
+			free(ciphertext);
+		}
+		if (e >= 1) {
+			free(iv);
+		}
+		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
+	}
+
+	free(tag);
+	free(ciphertext);
+	free(iv);
+
+	return 1;
 }
