@@ -24,17 +24,33 @@
 using namespace std;
 
 struct connection_data {
-	shared_timed_mutex mutex_struct;
-	
+	// Socket
 	const int socket;
 	mutex mutex_socket_out;
 	mutex mutex_socket_in;
 
+	// Available status
 	bool available = true;
-	
-	// TODO chiave pubblica
+	shared_timed_mutex mutex_available;
 
-	connection_data(const int _socket) : socket(_socket)
+	// Variable for starting a talk
+	condition_variable ready_to_talk_cv;
+	mutex ready_to_talk_mutex;
+	bool has_chosen_interlocutor = false;
+	string interlocutor_user = "";
+
+	// Wait for the end of talk
+	condition_variable end_talk_cv;
+	mutex end_talk_mutex;
+	bool is_talk_ended = false;
+	
+	// Shared symmetric key
+	const unsigned char* key;
+	const size_t key_len;
+	shared_timed_mutex mutex_key;
+
+	connection_data(const int _socket, const unsigned char* _key, const size_t _key_len) : 
+		socket(_socket), key(_key), key_len(_key_len)
 	{
 		
 	}
@@ -64,18 +80,26 @@ public:
 
 	bool configure_listener_socket();
 	int accept_client (sockaddr_in* client_addr);
-	bool add_new_client (string username, const int socket);
-	bool handle_socket_lock (const string username, const bool lock, const bool input);
-	int close_client (const string username);
+	bool add_new_client (string username, const int socket, 
+	                     const unsigned char* key, const size_t key_len);
+	bool handle_socket_lock (const string& username, const bool lock, const bool input);
+	unsigned char* get_client_shared_key (const string& username, size_t& key_len);
+	int remove_client (const string& username);
 	
 	// }
 	
 	// Functions that monitor current status of client connections {
 	
 	list<string> get_available_clients_list ();
-	bool is_client_online (const string& username);
+	int set_available_status (const string& username, const bool status);
 
 	// }
+
+	int start_talking (const string& username, unsigned char*& key, size_t& key_len);
+	int wait_start_talk (const string& user_dest, const string& user_src);
+	int wait_end_talk (const string& user);
+	int notify_start_talk (const string& wanted_user, const string asking_user);
+	int notify_end_talk (const string& user);
 };
 
 
@@ -89,7 +113,9 @@ class ServerThread {
 	int client_socket;
 	sockaddr_in main_client_address;
 
-	string username;
+	string client_username;
+	unsigned char* client_key = nullptr;
+	size_t client_key_len = 0;
 
 	// Base methods for networking {
 
@@ -111,22 +137,22 @@ class ServerThread {
 	X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
 
-	static int gcm_encrypt (unsigned char* plaintext, int plaintext_len,
-					        unsigned char* aad, int aad_len, 
-					        unsigned char* key,
-					        unsigned char* iv, int iv_len, 
+	static int gcm_encrypt (const unsigned char* plaintext, const int plaintext_len,
+					        const unsigned char* aad, const int aad_len, 
+					        const unsigned char* key,
+					        const unsigned char* iv, const int iv_len, 
 					        unsigned char*& ciphertext, size_t& ciphertext_len,
 					        unsigned char*& tag, size_t& tag_len);
-	static int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
-                            unsigned char* aad, int aad_len,
-                            unsigned char* tag,
-                            unsigned char* key,
-                            unsigned char* iv, int iv_len,
+	static int gcm_decrypt (const unsigned char* ciphertext, const int ciphertext_len,
+                            const unsigned char* aad, const int aad_len,
+                            const unsigned char* tag,
+                            const unsigned char* key,
+                            const unsigned char* iv, const int iv_len,
                             unsigned char*& plaintext, size_t& plaintext_len);
-	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
+	unsigned char* sign_message(const unsigned char* msg, const size_t msg_len, unsigned int& signature_len);
 
-	static int verify_client_signature (unsigned char* signature, size_t signature_len, 
-                                        unsigned char* cleartext, size_t cleartext_len,
+	static int verify_client_signature (const unsigned char* signature, const size_t signature_len, 
+                                        const unsigned char* cleartext, const size_t cleartext_len,
                                         const string& username);
 	
 	static void secure_free (void* addr, size_t len);
@@ -136,14 +162,21 @@ class ServerThread {
 
 	// Management of client's request {
 
-	//unsigned char* get_new_client_command ();
-	//int execute_client_command (const unsigned char* msg);
-	//int execute_show (const unsigned char*);
-	//int execute_talk (const unsigned char*);
-	//int execute_exit ();
+	int send_plaintext (const int socket, const unsigned char* msg, const size_t msg_len, const unsigned char* key);
+	int send_error (const int socket, const uint8_t type, const unsigned char* key);
+	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len);
+
+	int get_new_client_command (unsigned char*& msg, size_t& msg_len);
+	int execute_client_command (const unsigned char* msg, size_t msg_len);
+	int execute_show ();
+	int execute_talk (const unsigned char* msg, size_t msg_len);
+	int execute_exit ();
 
 	uint8_t get_request_type (const unsigned char* msg);
 	bool check_username_validity(const string& username);
+
+	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key);
+	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
 
 	// }
 
@@ -177,6 +210,22 @@ public:
 	#define		TYPE_SHOW		0x00
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
+	#define 	ACCEPT_TALK		0x03
+
+	#define 	CLIENT_ERROR	0xFF
+// }
+
+// Type of server messages (1 byte) {
+	#define		SERVER_OK		0x00
+	#define		SERVER_ERR		0xFF
+	#define 	SERVER_REQUEST_TO_TALK	0x01
+// }
+
+// Type of errors (1 byte) {
+	#define		ERR_ALREADY_LOGGED		0x01
+	#define		ERR_WRONG_TYPE			0x02
+
+	#define 	ERR_GENERIC				0xFF
 // }
 
 #define TAG_SIZE 16
