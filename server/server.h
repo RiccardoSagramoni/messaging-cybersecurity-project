@@ -164,7 +164,7 @@ class ServerThread {
 
 	int send_plaintext (const int socket, const unsigned char* msg, const size_t msg_len, const unsigned char* key);
 	int send_error (const int socket, const uint8_t type, const unsigned char* key);
-	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len);
+	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key);
 
 	int get_new_client_command (unsigned char*& msg, size_t& msg_len);
 	int execute_client_command (const unsigned char* msg, size_t msg_len);
@@ -177,7 +177,8 @@ class ServerThread {
 
 	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key);
 	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
-	int send_talk_notification_to_first_client();
+	int send_notification_for_accepted_talk_request();
+	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key);
 
 	// }
 
@@ -217,8 +218,9 @@ public:
 // }
 
 // Type of server messages (1 byte) {
-	#define		SERVER_OK		0x00
-	#define		SERVER_ERR		0xFF
+	#define		SERVER_OK				0x00
+	#define		SERVER_ERR				0xFF
+
 	#define 	SERVER_REQUEST_TO_TALK	0x01
 // }
 

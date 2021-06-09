@@ -440,7 +440,7 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
  * @param msg_len 
  * @return int 
  */
-int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len)
+int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key)
 {
 	long ret_long = -1;
 	
@@ -470,7 +470,7 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		}
 
 		// 4) Decrypt message
-		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, client_key, 
+		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, key, 
 		                      iv, iv_len, msg, msg_len);
 		if (ret < 0) {
 			throw 3;
@@ -1675,7 +1675,7 @@ int ServerThread::get_new_client_command (unsigned char*& msg, size_t& msg_len)
 		}
 		
 		// 2) Receive message from client
-		ret = receive_plaintext(client_socket, msg, msg_len);
+		ret = receive_plaintext(client_socket, msg, msg_len, client_key);
 		if (ret != 1) {
 			throw 1;
 		}
@@ -1872,9 +1872,13 @@ int ServerThread::execute_talk (const unsigned char* msg, size_t msg_len)
 		}
 
 		// 6) Notify first client
-		ret = send_talk_notification_to_first_client();
+		ret = send_notification_for_accepted_talk_request();
+		if (ret != 1) {
+			throw 6;
+		}
 
 		// 7) Execute DH protocol between clients
+		ret = negotiate_key_between_clients (peer_socket, peer_key);
 
 		// 8) Start sending
 
@@ -1903,7 +1907,7 @@ int ServerThread::execute_talk (const unsigned char* msg, size_t msg_len)
 
 		return -1;
 	}
-
+	// TODO
 	return 1;
 }
 
@@ -1952,5 +1956,67 @@ int ServerThread::send_request_to_talk (const int socket, const string& from_use
 int ServerThread::wait_answer_to_request_to_talk (const int socket, const string& peer_username, const unsigned char* key)
 {
 	return server->wait_start_talk(peer_username, client_username);
+}
+
+/**
+ * // TODO
+ * @return int 
+ */
+int ServerThread::send_notification_for_accepted_talk_request ()
+{
+	const unsigned char msg[1] = {SERVER_OK};
+
+	return send_plaintext(client_socket, msg, 1, client_key);
+}
+
+/**
+ * // TODO
+ * @param peer_socket 
+ * @param peer_key 
+ * @return int 
+ */
+int ServerThread::negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key)
+{
+	int ret;
+
+	// 1) Receive g**a from client A (client_...)
+	unsigned char* key_ga;
+	size_t key_ga_len;
+	ret = receive_plaintext(client_socket, key_ga, key_ga_len, client_key);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
+		<< "receive_plaintext g**a from client A failed" << endl;
+		return -1;
+	}
+
+	// 2) Send g**a to client B (peer_...)
+	ret = send_plaintext(peer_socket, key_ga, key_ga_len, peer_key);
+	secure_free(key_ga, key_ga_len);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
+		<< "send_plaintext g**a to client B failed" << endl;
+		return -1;
+	}
+
+	// 3) Receive g**b from client B
+	unsigned char* key_gb;
+	size_t key_gb_len;
+	ret = receive_plaintext(peer_socket, key_gb, key_gb_len, peer_key);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
+		<< "receive_plaintext g**b from client B failed" << endl;
+		return -1;
+	}
+
+	// 4) Send g**b to client B
+	ret = send_plaintext(client_socket, key_gb, key_gb_len, client_key);
+	secure_free(key_gb, key_gb_len);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
+		<< "send_plaintext g**b to client A failed" << endl;
+		return -1;
+	}
+
+	return 1;
 }
 
