@@ -1770,8 +1770,8 @@ int ServerThread::execute_show ()
 		pos += sizeof(string_size);
 
 		// b) Insert username
-		memcpy(message + pos, s.c_str(), string_size);
-		pos += string_size;
+		memcpy(message + pos, s.c_str(), s.length() + 1);
+		pos += s.length() + 1;
 	}
 
 	// 3) Get lock on socket output stream
@@ -2030,14 +2030,14 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 
 int ServerThread::talk_between_clients (const int peer_socket, const unsigned char* peer_key)
 {
-	atomic<bool> closing_talk(false);
+	atomic<bool> talk_failed(false);
 	atomic<int> return_value_child(1);
 	atomic<int> return_value_father(1);
 
 	// Create new thread for communication B->A
-	thread child(talk, peer_socket, peer_key, client_socket, client_key, closing_talk, return_value_child);
+	thread child(talk, peer_socket, peer_key, client_socket, client_key, talk_failed, return_value_child);
 
-	talk(client_socket, client_key, peer_socket, peer_key, closing_talk, return_value_father);
+	talk(client_socket, client_key, peer_socket, peer_key, talk_failed, return_value_father);
 
 	child.join();
 }
@@ -2048,10 +2048,10 @@ int ServerThread::talk_between_clients (const int peer_socket, const unsigned ch
  * @param src_key 
  * @param dest_socket 
  * @param dest_key 
- * @param closing_talk 
+ * @param talk_failed 
  * @param return_value 
  */
-void ServerThread::talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<bool>& closing_talk, atomic<int>& return_value)
+void ServerThread::talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<bool>& talk_failed, atomic<int>& return_value)
 {
 	int ret;
 	unsigned char* msg;
@@ -2062,7 +2062,7 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 		ret = receive_plaintext(src_socket, msg, msg_len, src_key);
 		if (ret != 1) {
 			// Close talk
-			closing_talk.store(true);
+			talk_failed.store(true);
 
 			// Send closing message to dest
 			unsigned char closing_msg[1]= {SERVER_END_TALK};
@@ -2075,11 +2075,21 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 			return;
 		}
 
-		// 2) Check type of message
+		// 2) Check if talk is closing
+		if (talk_failed.load()) {
+			free(msg);
+			
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "closing talk (2)" << endl;
+			
+			return_value.store(1);
+			return;
+		}
+
+		// 3) Check type of message
 		uint8_t* type_ptr = (uint8_t*)msg;
 		if (*type_ptr != TALKING) {
-			// Close talk
-			closing_talk.store(true);
+			free(msg);
 
 			// Send closing message to dest
 			unsigned char closing_msg[1]= {SERVER_END_TALK};
@@ -2101,11 +2111,12 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 
 		*type_ptr = SERVER_OK;
 
-		// 2) Send to destination
+		// 4) Send to destination
 		ret = send_plaintext(dest_socket, msg, msg_len, dest_key);
+		free(msg);
 		if (ret != 1) {
 			// Close talk
-			closing_talk.store(true);
+			talk_failed.store(true);
 
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "send plaintext to destination failed" << endl;
@@ -2114,8 +2125,8 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 			return;
 		}
 
-		// 3) Check if talk is closing
-		if (closing_talk.load()) {
+		// 5) Check if talk is closing
+		if (talk_failed.load()) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "closing talk (2)" << endl;
 			return_value.store(1);
@@ -2123,3 +2134,9 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 		}
 	}
 }
+/*
+A->S1 chiudi
+S1->B chiudi
+S1 set closing state
+B->S2 chiudi
+*/

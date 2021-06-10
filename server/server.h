@@ -218,6 +218,7 @@ public:
 	#define 	ACCEPT_TALK		0x03
 	#define 	TALKING			0x04
 	#define 	END_TALK		0x05
+	
 
 	#define 	CLIENT_ERROR	0xFF
 // }
