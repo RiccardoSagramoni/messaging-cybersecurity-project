@@ -411,7 +411,7 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 		return -1;
 	}
 	if (request_type == SERVER_OK) {
-		cout<<"AAAAAA"<<endl;
+		printf("%s",msg_received); 
 	}
 
 	cout<<(uint8_t)msg_received[0]<<endl;
