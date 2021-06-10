@@ -74,9 +74,5 @@ int main(int argc, char** argv)
     thread tt(receive_thread, &client, client.get_sock(), client.get_server_addr());*/
     thread t(thread_main, &client, client.get_sock(), client.get_server_addr());
     t.join(); // TODO remove
-    while (true)
-    {
-        
-    }
     //client.exit();
 }

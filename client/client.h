@@ -17,6 +17,7 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <list>
+#include <iomanip>
 
 #define LENGTH 2048
 

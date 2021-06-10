@@ -229,6 +229,9 @@ int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
 		memcpy(message + 1, &string_size, sizeof(string_size));
 		memcpy(message + 5, user_buf.c_str(), user_buf.length());
 
+		cout<<message[0]<<endl;
+		cout<<message[1]<<endl;
+
 
 
 		if (!message) {
@@ -407,11 +410,21 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 	if (request_type == SERVER_ERR) {
 		return -1;
 	}
+	if (request_type == SERVER_OK) {
+		cout<<"AAAAAA"<<endl;
+	}
+
+	cout<<(uint8_t)msg_received[0]<<endl;
+	
+
+
 	//TODO print usernames list
 
 
 
-	secure_free(msg_received, msg_received_len);
+
+
+	//secure_free(msg_received, msg_received_len);
 
 	return 1;
 }
@@ -1918,14 +1931,11 @@ int ClientThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		if (ret_long <= 0) {
 			throw 2;
 		}
-
 		// 4) Decrypt message
-		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, 
-		                      iv, iv_len, msg, msg_len);
+		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
 		if (ret < 0) {
 			throw 3;
 		}
-	
 	} catch (int e) {
 		if (e >= 3) {
 			free(tag);

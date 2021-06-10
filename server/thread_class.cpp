@@ -425,7 +425,6 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		}
 		return -1;
 	}
-
 	free(ciphertext);
 	free(tag);
 	free(iv);
@@ -474,7 +473,6 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		if (ret < 0) {
 			throw 3;
 		}
-	
 	} catch (int e) {
 		if (e >= 3) {
 			free(tag);
@@ -1703,7 +1701,6 @@ int ServerThread::get_new_client_command (unsigned char*& msg, size_t& msg_len)
 int ServerThread::execute_client_command (const unsigned char* msg, size_t msg_len) 
 {
 	uint8_t request_type = get_request_type(msg);
-	
 	int ret = 0;
 
 	switch (request_type) {
@@ -1751,6 +1748,7 @@ int ServerThread::execute_show ()
 	size_t message_len = 1;
 	for (auto s : l) {
 		message_len += (s.length() + 1);
+		cout<<s<<endl;
 	}
 
 	// 2b) Allocate message
@@ -1758,7 +1756,6 @@ int ServerThread::execute_show ()
 	if (!message) {
 		return -1;
 	}
-
 	// 2c) Initialise message
 	uint8_t* type = (uint8_t*)&message[0];
 	*type = SERVER_OK;
@@ -1768,20 +1765,19 @@ int ServerThread::execute_show ()
 		// a) Insert username length
 		uint32_t string_size = s.length() + 1;
 		string_size = htonl(string_size);
-		memcpy(message + pos, &string_size, sizeof(string_size));
+		memcpy(message + 1, &string_size, sizeof(string_size));
 		pos += sizeof(string_size);
-
 		// b) Insert username
-		memcpy(message + pos, s.c_str(), string_size);
+		memcpy(message + 5, s.c_str(), s.length());
 		pos += string_size;
 	}
-
+	message[message_len - 1] = '\0';
 	// 3) Get lock on socket output stream
 	if (!server->handle_socket_lock(client_username, true, false)) {
 		free(message);
 		return -1;
 	}
-
+	cout<<message<<endl;
 	// 4) Send message
 	int ret = send_plaintext(client_socket, (unsigned char*)message, message_len, client_key);
 	free(message);
@@ -1794,7 +1790,6 @@ int ServerThread::execute_show ()
 	if (!server->handle_socket_lock(client_username, false, false)) {
 		return -1;
 	}
-
 	return 1;
 }
 
@@ -1807,7 +1802,6 @@ int ServerThread::execute_show ()
 int ServerThread::execute_talk (const unsigned char* msg, size_t msg_len)
 {
 	int ret;
-
 	string peer_username;
 	unsigned char* peer_key;
 	size_t peer_key_len;
@@ -2029,3 +2023,9 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 	return 1;
 }
 
+
+
+
+int ServerThread::talk_between_clients (const int peer_socket, const unsigned char* peer_key) {
+	return 1;
+}
