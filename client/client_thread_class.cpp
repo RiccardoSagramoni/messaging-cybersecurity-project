@@ -131,7 +131,7 @@ long ClientThread::receive_message (const int socket, void** msg)
 
 	return len;
 }
-
+//Run
 void ClientThread::run()
 {
 	int ret;
