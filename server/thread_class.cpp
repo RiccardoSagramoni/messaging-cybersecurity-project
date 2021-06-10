@@ -363,7 +363,11 @@ int ServerThread::send_error (const int socket, const uint8_t type, const unsign
 }
 
 /**
- * Send a response message to the client
+ * Send a plaintext to the client. The plaintext is encrypted and authenticated with AES-gcm.
+ * This functions sends three messages through the network:
+ * 1) Initialization vector
+ * 2) Ciphertext
+ * 3) Tag
  * 
  * @param socket socket descriptor
  * @param msg message
@@ -434,11 +438,20 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 }
 
 /**
- * // TODO
- * @param socket 
- * @param msg 
- * @param msg_len 
- * @return int 
+ * Return the plaintext send from the client. 
+ * The ciphertext is supposed to have been encrypted and authenticated with AES-gcm.
+ * 
+ * This functions receives three messages from the client:
+ * 1) Initialization vector
+ * 2) Ciphertext
+ * 3) Tag
+ * 
+ * @param socket id of the socket
+ * @param msg on success it will point to the decrypted text
+ * @param msg_len on success it will contain the length of the decrypted message
+ * @key symmetric shared key used for the encryption
+ * 
+ * @return 1 on success, 0 if client closes the socket, -1 on failure 
  */
 int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key)
 {
@@ -1874,19 +1887,19 @@ int ServerThread::execute_talk (const unsigned char* msg, size_t msg_len)
 		// 6) Notify first client
 		ret = send_notification_for_accepted_talk_request();
 		if (ret != 1) {
-			throw 6;
+			throw 7;
 		}
 
 		// 7) Execute DH protocol between clients
 		ret = negotiate_key_between_clients(peer_socket, peer_key);
 		if (ret != 1) {
-			throw 6;
+			throw 7;
 		}
 
 		// 8) Start talking
-		ret = talk_between_clients(peer_socket, peer_key);
+		ret = talk_between_clients(peer_username, peer_socket, peer_key);
 		if (ret != 1) {
-			throw 6;
+			throw 7;
 		}
 
 	} catch (int e) {
@@ -2028,30 +2041,36 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 }
 
 
-int ServerThread::talk_between_clients (const int peer_socket, const unsigned char* peer_key)
+int ServerThread::talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key)
 {
-	atomic<bool> talk_failed(false);
 	atomic<int> return_value_child(1);
 	atomic<int> return_value_father(1);
 
 	// Create new thread for communication B->A
-	thread child(talk, peer_socket, peer_key, client_socket, client_key, talk_failed, return_value_child);
+	thread child(talk, peer_socket, peer_key, client_socket, client_key, return_value_child);
 
-	talk(client_socket, client_key, peer_socket, peer_key, talk_failed, return_value_father);
+	talk(client_socket, client_key, peer_socket, peer_key, return_value_father);
 
 	child.join();
+
+	// Pass the return value to the main thread of second client
+	server->set_talk_exit_status(peer_username, return_value_child.load());
+
+	return return_value_father.load();
 }
 
 /**
+ * Execute the protocol for talking between clients.
+ * This function handle only one direction of the message flow.
  * 
- * @param src_socket 
- * @param src_key 
- * @param dest_socket 
- * @param dest_key 
- * @param talk_failed 
- * @param return_value 
+ * @param src_socket id of the socket by which this function receives messages 
+ * @param src_key key used by source client
+ * @param dest_socket id of the socket by which this function sends messages
+ * @param dest_key key used by destination client
+ * @param return_value it will contain 1 if the talk has ended correctly, 
+ * 0 if a socket has been closed, -1 if any other error occurs
  */
-void ServerThread::talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<bool>& talk_failed, atomic<int>& return_value)
+void ServerThread::talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<int>& return_value)
 {
 	int ret;
 	unsigned char* msg;
@@ -2061,8 +2080,8 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 		// 1) Receive from source
 		ret = receive_plaintext(src_socket, msg, msg_len, src_key);
 		if (ret != 1) {
-			// Close talk
-			talk_failed.store(true);
+			// Shutdown the faulty connection
+			shutdown(src_socket, SHUT_RDWR);
 
 			// Send closing message to dest
 			unsigned char closing_msg[1]= {SERVER_END_TALK};
@@ -2072,17 +2091,6 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 			<< "receive_plaintext from source failed" << endl;
 
 			return_value.store(ret);
-			return;
-		}
-
-		// 2) Check if talk is closing
-		if (talk_failed.load()) {
-			free(msg);
-			
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "closing talk (2)" << endl;
-			
-			return_value.store(1);
 			return;
 		}
 
@@ -2115,21 +2123,13 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 		ret = send_plaintext(dest_socket, msg, msg_len, dest_key);
 		free(msg);
 		if (ret != 1) {
-			// Close talk
-			talk_failed.store(true);
+			// Shutdown the faulty connection
+			shutdown(dest_socket, SHUT_RDWR);
 
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "send plaintext to destination failed" << endl;
 
 			return_value.store(ret);
-			return;
-		}
-
-		// 5) Check if talk is closing
-		if (talk_failed.load()) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "closing talk (2)" << endl;
-			return_value.store(1);
 			return;
 		}
 	}

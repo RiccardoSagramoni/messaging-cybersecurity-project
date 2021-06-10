@@ -44,6 +44,7 @@ struct connection_data {
 	condition_variable end_talk_cv;
 	mutex end_talk_mutex;
 	bool is_talk_ended = false;
+	int talk_exit_status = 0;
 	
 	// Shared symmetric key
 	const unsigned char* key;
@@ -101,6 +102,7 @@ public:
 	int wait_end_talk (const string& user);
 	int notify_start_talk (const string& wanted_user, const string asking_user);
 	int notify_end_talk (const string& user);
+	int set_talk_exit_status(const string& username, const int status);
 };
 
 
@@ -180,8 +182,8 @@ class ServerThread {
 	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
 	int send_notification_for_accepted_talk_request();
 	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key);
-	int talk_between_clients (const int peer_socket, const unsigned char* peer_key);
-	void talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<bool>& closing_talk, atomic<int>& return_value);
+	int talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
+	void talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<int>& return_value);
 
 	// }
 
@@ -218,7 +220,6 @@ public:
 	#define 	ACCEPT_TALK		0x03
 	#define 	TALKING			0x04
 	#define 	END_TALK		0x05
-	
 
 	#define 	CLIENT_ERROR	0xFF
 // }
