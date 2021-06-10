@@ -410,15 +410,29 @@ int ClientThread::show(const string& username, unsigned char* shared_key) {
 	if (request_type == SERVER_ERR) {
 		return -1;
 	}
+	//Print usernames list
+	bool controller = false;
+	int cronolig = 1;
 	if (request_type == SERVER_OK) {
-		printf("%s",msg_received); 
+		for (int i = 5; i<msg_received_len+1; i++) {
+			if (msg_received[i] != NULL) {
+				controller = true;
+				cout<<msg_received[i];
+			}
+			else {
+				if (controller == true) {
+					cout<<endl;
+					cout<<endl;
+					controller = false;
+					cronolig += 1;
+				}
+			}
+		}
+		cout<<endl;
+		cout<<endl;
 	}
-
-	cout<<(uint8_t)msg_received[0]<<endl;
 	
 
-
-	//TODO print usernames list
 
 
 

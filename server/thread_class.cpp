@@ -1748,7 +1748,6 @@ int ServerThread::execute_show ()
 	size_t message_len = 1;
 	for (auto s : l) {
 		message_len += sizeof(uint32_t) + s.length() + 1;
-		cout<<s<<endl;
 	}
 
 	// 2b) Allocate message
@@ -1765,21 +1764,18 @@ int ServerThread::execute_show ()
 		// a) Insert username length
 		uint32_t string_size = strlen(s.c_str()) + 1;
 		string_size = htonl(string_size);
-		cout<<string_size<<endl;
-		cout<<s.length()<<endl;
 		memcpy(message + 1, &string_size, sizeof(string_size));
 		pos += sizeof(string_size);
 		// b) Insert username
 		memcpy(message + 5, s.c_str(), s.length() + 1);
 		pos += s.length() + 1;
 	}
-	message[message_len - 1] = '\0';
+	//message[message_len - 1] = '\0';
 	// 3) Get lock on socket output stream
 	if (!server->handle_socket_lock(client_username, true, false)) {
 		free(message);
 		return -1;
 	}
-	cout<<message<<endl;
 	// 4) Send message
 	int ret = send_plaintext(client_socket, (unsigned char*)message, message_len, client_key);
 	free(message);
