@@ -1,4 +1,5 @@
 #include <arpa/inet.h> // for htons, ntohs...
+#include <atomic>
 #include <cerrno> // for errno
 #include <cstring> // for memset
 #include <cstdio> // for file access and error-handling functions
@@ -180,6 +181,7 @@ class ServerThread {
 	int send_notification_for_accepted_talk_request();
 	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key);
 	int talk_between_clients (const int peer_socket, const unsigned char* peer_key);
+	void talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<bool>& closing_talk, atomic<int>& return_value);
 
 	// }
 
@@ -209,11 +211,13 @@ public:
 //////                   MACROS                   //////
 ////////////////////////////////////////////////////////
 
-// Type of client request (1 byte) {
+// Type of client messages (1 byte) {
 	#define		TYPE_SHOW		0x00
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
 	#define 	ACCEPT_TALK		0x03
+	#define 	TALKING			0x04
+	#define 	END_TALK		0x05
 
 	#define 	CLIENT_ERROR	0xFF
 // }
@@ -223,6 +227,7 @@ public:
 	#define		SERVER_ERR				0xFF
 
 	#define 	SERVER_REQUEST_TO_TALK	0x01
+	#define 	SERVER_END_TALK			0X02
 // }
 
 // Type of errors (1 byte) {

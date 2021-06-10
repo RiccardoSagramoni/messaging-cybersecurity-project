@@ -1748,7 +1748,7 @@ int ServerThread::execute_show ()
 	// 2a) Calculate necessary space
 	size_t message_len = 1;
 	for (auto s : l) {
-		message_len += (s.length() + 1);
+		message_len += (sizeof(uint32_t) + s.length() + 1);
 	}
 
 	// 2b) Allocate message
@@ -2027,3 +2027,99 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 	return 1;
 }
 
+
+int ServerThread::talk_between_clients (const int peer_socket, const unsigned char* peer_key)
+{
+	atomic<bool> closing_talk(false);
+	atomic<int> return_value_child(1);
+	atomic<int> return_value_father(1);
+
+	// Create new thread for communication B->A
+	thread child(talk, peer_socket, peer_key, client_socket, client_key, closing_talk, return_value_child);
+
+	talk(client_socket, client_key, peer_socket, peer_key, closing_talk, return_value_father);
+
+	child.join();
+}
+
+/**
+ * 
+ * @param src_socket 
+ * @param src_key 
+ * @param dest_socket 
+ * @param dest_key 
+ * @param closing_talk 
+ * @param return_value 
+ */
+void ServerThread::talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<bool>& closing_talk, atomic<int>& return_value)
+{
+	int ret;
+	unsigned char* msg;
+	size_t msg_len;
+	
+	while (true) {
+		// 1) Receive from source
+		ret = receive_plaintext(src_socket, msg, msg_len, src_key);
+		if (ret != 1) {
+			// Close talk
+			closing_talk.store(true);
+
+			// Send closing message to dest
+			unsigned char closing_msg[1]= {SERVER_END_TALK};
+			send_plaintext(dest_socket, closing_msg, 1, dest_key);
+
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "receive_plaintext from source failed" << endl;
+
+			return_value.store(ret);
+			return;
+		}
+
+		// 2) Check type of message
+		uint8_t* type_ptr = (uint8_t*)msg;
+		if (*type_ptr != TALKING) {
+			// Close talk
+			closing_talk.store(true);
+
+			// Send closing message to dest
+			unsigned char closing_msg[1]= {SERVER_END_TALK};
+			send_plaintext(dest_socket, closing_msg, 1, dest_key);
+
+			if (*type_ptr == END_TALK) {
+				return_value.store(1);
+				cerr << "[Thread " << this_thread::get_id() << "] talk: "
+				<< "closing talk (1)" << endl;
+			}
+			else {
+				return_value.store(-1);
+				cerr << "[Thread " << this_thread::get_id() << "] talk: "
+				<< "received wrong message type" << endl;
+			}
+			
+			return;
+		}
+
+		*type_ptr = SERVER_OK;
+
+		// 2) Send to destination
+		ret = send_plaintext(dest_socket, msg, msg_len, dest_key);
+		if (ret != 1) {
+			// Close talk
+			closing_talk.store(true);
+
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "send plaintext to destination failed" << endl;
+
+			return_value.store(ret);
+			return;
+		}
+
+		// 3) Check if talk is closing
+		if (closing_talk.load()) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "closing talk (2)" << endl;
+			return_value.store(1);
+			return;
+		}
+	}
+}
