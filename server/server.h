@@ -100,7 +100,7 @@ public:
 	int prepare_for_talking (const string& username, unsigned char*& key, size_t& key_len);
 	int wait_start_talk (const string& user_dest, const string& user_src);
 	int wait_end_talk (const string& user);
-	int notify_start_talk (const string& wanted_user, const string asking_user);
+	int notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting);
 	int notify_end_talk (const string& user);
 	int set_talk_exit_status(const string& username, const int status);
 };
@@ -122,8 +122,8 @@ class ServerThread {
 
 	// Base methods for networking {
 
-	int send_message (const int socket, void* msg, const uint32_t msg_len);
-	long receive_message (const int socket, void** msg);
+	static int send_message (const int socket, void* msg, const uint32_t msg_len);
+	static long receive_message (const int socket, void** msg);
 
 	// }
 
@@ -165,14 +165,15 @@ class ServerThread {
 
 	// Management of client's request {
 
-	int send_plaintext (const int socket, const unsigned char* msg, const size_t msg_len, const unsigned char* key);
-	int send_error (const int socket, const uint8_t type, const unsigned char* key);
-	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key);
+	static int send_plaintext (const int socket, const unsigned char* msg, const size_t msg_len, const unsigned char* key);
+	int send_error (const int socket, const uint8_t type, const unsigned char* key, const bool own_lock);
+	static int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key);
 
 	int get_new_client_command (unsigned char*& msg, size_t& msg_len);
-	int execute_client_command (const unsigned char* msg, size_t msg_len);
+	int execute_client_command (const unsigned char* msg, const size_t msg_len);
 	int execute_show ();
-	int execute_talk (const unsigned char* msg, size_t msg_len);
+	int execute_talk (const unsigned char* msg, const size_t msg_len);
+	int execute_accept_talk (const unsigned char* msg, const size_t msg_len, const bool accept);
 	int execute_exit ();
 
 	uint8_t get_request_type (const unsigned char* msg);
@@ -183,7 +184,7 @@ class ServerThread {
 	int send_notification_for_accepted_talk_request();
 	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key);
 	int talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
-	void talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<int>& return_value);
+	void talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<int>* return_value);
 
 	// }
 
@@ -200,6 +201,10 @@ class ServerThread {
 	
 	
 	// }
+
+	void a (atomic_int* return_value) {
+		return;
+	}
 
 public:
 	ServerThread(Server* _server, const int socket, const sockaddr_in addr);
@@ -218,6 +223,7 @@ public:
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
 	#define 	ACCEPT_TALK		0x03
+	#define 	REFUSE_TALK		0x13
 	#define 	TALKING			0x04
 	#define 	END_TALK		0x05
 
