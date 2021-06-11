@@ -75,14 +75,15 @@ int Server::accept_client (sockaddr_in* client_addr)
  * 
  * @return true on success, false on failure (client already logged in)
  */
-bool Server::add_new_client (string username, const int socket)
+bool Server::add_new_client (string username, const int socket, 
+                             const unsigned char* key, const size_t key_len)
 {
 	// Acquire lock for connected_client data structure
 	// (automatically unlock at the end of its scope)
 	lock_guard<shared_timed_mutex> lock(connected_client_mutex);
 
 	// Prepare data structure related to the client
-	connection_data* data = new connection_data(socket);
+	connection_data* data = new connection_data(socket, key, key_len);
 
 	// Add user to the list of connected client
 	auto ret = connected_client.insert({username, data});
@@ -99,7 +100,7 @@ bool Server::add_new_client (string username, const int socket)
  * 
  * @return true on success, false on failure
  */
-bool Server::handle_socket_lock (const string username, const bool lock, const bool input)
+bool Server::handle_socket_lock (const string& username, const bool lock, const bool input)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -114,9 +115,6 @@ bool Server::handle_socket_lock (const string username, const bool lock, const b
 	catch (const out_of_range& ex) {
 		return false;
 	}
-
-	// Acquire shared lock for reading client's data structure
-	shared_lock<shared_timed_mutex> mutex_client_data(client_data->mutex_struct);
 
 	// Select socket's mutex for required mode (input or output)
 	mutex& socket_mutex = input ? client_data->mutex_socket_in : client_data->mutex_socket_out;
@@ -144,8 +142,9 @@ list<string> Server::get_available_clients_list ()
 
 	list<string> l;
 
+	// Search for available users
 	for (auto i : connected_client) {
-		shared_lock<shared_timed_mutex> mutex_lock(i.second->mutex_struct);
+		shared_lock<shared_timed_mutex> available_lock(i.second->mutex_available);
 		
 		if (i.second->available) {
 			l.push_back(i.first);
@@ -156,29 +155,50 @@ list<string> Server::get_available_clients_list ()
 }
 
 /**
- * Check is a specified client is currently online (logged on the server)
+ * Set availability to talk of a specified client
  * 
- * @param username identifier of client
- * @return true if the client is online, false otherwise 
+ * @param username id of user
+ * @param status new available status
+ * 
+ * @return 1 on success, -1 on failure
  */
-bool Server::is_client_online (const string& username)
+int Server::set_available_status (const string& username, const bool status)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 
-	return (connected_client.count(username) != 0);
+	connection_data* client_data;
+
+	// Get client data associated with given username.
+	// Fails if there is no associated data.
+	try {
+		client_data = connected_client.at(username);
+	}
+	catch (const out_of_range& ex) {
+		return -1;
+	}
+
+	// Acquire exclusive lock for writing on data structure and set available status
+	lock_guard<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	
+	if (client_data->available == status) {
+		return 0;
+	}
+	client_data->available = status;
+
+	return 1;
 }
 
 /**
  * Close connection with specified client
  * 
  * @param username identifier of the client
- * @return 1 on success, -1 on failure 
+ * @return 1 on success, -1 on failure (client is not logged online)
  */
-int Server::close_client (const string username)
+int Server::remove_client (const string& username)
 {
-	// Acquire lock for reading the client data's container
-	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+	// Acquire exclusive lock for writing on the client data's container
+	lock_guard<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 	
 	connection_data* client_data;
 
@@ -191,17 +211,301 @@ int Server::close_client (const string username)
 		return -1;
 	}
 
-	// Acquire exclusive lock for reading client's data structure
-	lock_guard<shared_timed_mutex> mutex_client_data(client_data->mutex_struct);
+	// Bruteforce close the socket
+	if (shutdown(client_data->socket, SHUT_RDWR) >= 0) {
+		close(client_data->socket);
+	}
 
-	// Acquire lock without deadlock
-	// TODO check comment and lock
-	// ? does thread already have lock on output
-	lock(client_data->mutex_socket_in, client_data->mutex_socket_out);
-	lock_guard<mutex> l_socket_in(client_data->mutex_socket_in, adopt_lock);
-	lock_guard<mutex> l_socket_out(client_data->mutex_socket_out, adopt_lock);
+	// Remove key
+	#pragma optimize("", off)
+		memset((void*) client_data->key, 0, client_data->key_len);
+	#pragma optimize("", on)
+	free((void*) client_data->key);
 
-	close(client_data->socket);
+	// Remove client data
+	connected_client.erase(username);
 
+	return 1;
+}
+
+/**
+ * Create a copy of the key shared with the chosen client
+ * 
+ * @param username id of client
+ * @param key_len on success it will contain the length of the key
+ * 
+ * @return the shared key on success, NULL on failure
+ */
+unsigned char* Server::get_client_shared_key (const string& username, size_t& key_len)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data = nullptr;
+
+	// Get client data associated with given username.
+	// Fails if there is no associated data.
+	try {
+		client_data = connected_client.at(username);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::get_client_shared_key: "
+		<< "username " << username << " is not logged" << endl;
+		return nullptr;
+	}
+
+	// Acquire shared lock for writing the key
+	lock_guard<shared_timed_mutex> mutex_key(client_data->mutex_key);
+
+	unsigned char* key = (unsigned char*)malloc(client_data->key_len);
+	if (!key) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::get_client_shared_key: "
+		<< "malloc key failed" << endl;
+		return nullptr;
+	}
+
+	memcpy(key, client_data->key, client_data->key_len);
+	key_len = client_data->key_len;
+
+	return key;
+}
+
+/**
+ * Prepare the structures for starting a message conversation between two clients.
+ * Check if the peer user is online and available to talk, extract his key and 
+ * lock the output stream of the socket
+ * 
+ * @param username id of the peer user
+ * @param key on success it will point to the newly-allocated key
+ * @param key_len key length
+ * @return 1 on success, -2 if the user isn't online, -3 if the user isn't available to talk,
+ * -1 if any other error occurs
+ */
+int Server::prepare_for_talking (const string& username, unsigned char*& key, size_t& key_len)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(username);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::prepare_for_talking: "
+		<< "username " << username << " is not logged" << endl;
+		return -2;
+	}
+
+	// Check if the client is available to talk
+	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	if (!client_data->available) {
+		return -3;
+	}
+	mutex_available.unlock();
+
+	// Copy shared key with client
+	shared_lock<shared_timed_mutex> mutex_key(client_data->mutex_key);
+	if (!client_data->key) {
+		return -1;
+	}
+	key_len = client_data->key_len;
+	key = (unsigned char*)malloc(key_len);
+	if (!key) {
+		return -1;
+	}
+	memcpy(key, client_data->key, key_len);
+	mutex_key.unlock();
+
+	client_data->mutex_socket_out.lock();
+
+	return client_data->socket;
+}
+
+/**
+ * // TODO
+ * @param wanted_user 
+ * @param asking_user 
+ * @return 1 on success, -1 on failure 
+ */
+int Server::wait_start_talk (const string& wanted_user, const string& asking_user)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(wanted_user);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_start_talk: "
+		<< "username " << wanted_user << " is not logged" << endl;
+		return -1;
+	}
+
+	// Check if client is already unavailable
+	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	if (!client_data->available) {
+		return -1;
+	}
+	mutex_available.unlock();
+
+	// Wait until the "wanted" client have chosen an interlocutor
+	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
+	while (!client_data->has_chosen_interlocutor) {
+		client_data->ready_to_talk_cv.wait(talk_lock);
+	}
+
+	if (0 != asking_user.compare(client_data->interlocutor_user)) {
+		return -1;
+	}
+
+	return 1;
+}
+
+/**
+ * // TODO 
+ * @param user 
+ * @return int 
+ */
+int Server::wait_end_talk (const string& user)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(user);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_end_talk: "
+		<< "username " << user << " is not logged" << endl;
+		return -1;
+	}
+
+	// Wait until the talk is finished
+	unique_lock<mutex> end_talk_lock(client_data->end_talk_mutex);
+	while (!client_data->is_talk_ended) {
+		client_data->end_talk_cv.wait(end_talk_lock);
+	}
+	end_talk_lock.unlock();
+
+	// Set user as available
+	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	client_data->available = true;
+	mutex_available.unlock();
+
+	return 1;
+}
+
+/**
+ * // TODO 
+ * @param wanted_user 
+ * @param asking_user 
+ * @return int 
+ */
+int Server::notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(wanted_user);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_start_talk: "
+		<< "username " << wanted_user << " is not logged" << endl;
+		return -1;
+	}
+
+	// Set user as unavailable if has accepted the talk request
+	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	client_data->available = !is_accepting;
+	mutex_available.unlock();
+
+	// Reset end-talk flag
+	unique_lock<mutex> mutex_end_talk(client_data->end_talk_mutex);
+	client_data->is_talk_ended = false;
+	mutex_end_talk.unlock();
+
+	// Set chosen user to talk
+	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
+	client_data->has_chosen_interlocutor = true;
+	client_data->interlocutor_user = asking_user;
+	client_data->ready_to_talk_cv.notify_all();
+	talk_lock.unlock();
+
+	return 1;
+}
+
+/**
+ * // TODO
+ * 
+ * @param user 
+ * @return int 
+ */
+int Server::notify_end_talk (const string& user)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(user);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_end_talk: "
+		<< "username " << user << " is not logged" << endl;
+		return -1;
+	}
+
+	// Reset ready to talk
+	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
+	client_data->has_chosen_interlocutor = false;
+	talk_lock.unlock();
+
+	// Wake up waiting thread (main thread of socket)
+	unique_lock<mutex> end_talk_lock(client_data->end_talk_mutex);
+	client_data->is_talk_ended = true;
+	client_data->end_talk_cv.notify_all();
+
+	return 1;
+}
+
+/**
+ * // TODO
+ * @param username 
+ * @param status 
+ * @return 1 on success, -1 on failure 
+ */
+int Server::set_talk_exit_status(const string& username, const int status)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(username);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_end_talk: "
+		<< "user " << username << " is not logged" << endl;
+		return -1;
+	}
+
+	unique_lock<mutex> m(client_data->end_talk_mutex);
+	client_data->talk_exit_status = status;
 	return 1;
 }
