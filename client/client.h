@@ -92,6 +92,9 @@ public:
     int send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
     int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key);
     int exit_by_application(unsigned char* shared_key);
+    int receive_request_to_talk(unsigned char* session_key);
+    int send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key);
+    int recive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
 };
 
 
@@ -100,19 +103,24 @@ public:
 //////                   MACROS                   //////
 ////////////////////////////////////////////////////////
 
-// Type of client request (1 byte) {
+// Type of client messages (1 byte) {
 	#define		TYPE_SHOW		0x00
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
 	#define 	ACCEPT_TALK		0x03
+	#define 	REFUSE_TALK		0x13
+	#define 	TALKING			0x04
+	#define 	END_TALK		0x05
 
 	#define 	CLIENT_ERROR	0xFF
 // }
 
 // Type of server messages (1 byte) {
-	#define		SERVER_OK		0x00
-	#define		SERVER_ERR		0xFF
+	#define		SERVER_OK				0x00
+	#define		SERVER_ERR				0xFF
+
 	#define 	SERVER_REQUEST_TO_TALK	0x01
+	#define 	SERVER_END_TALK			0X02
 // }
 
 // Type of errors (1 byte) {
