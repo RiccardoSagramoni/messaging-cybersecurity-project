@@ -409,7 +409,7 @@ int Server::wait_end_talk (const string& user)
  * @param asking_user 
  * @return int 
  */
-int Server::notify_start_talk (const string& wanted_user, const string asking_user)
+int Server::notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -426,10 +426,15 @@ int Server::notify_start_talk (const string& wanted_user, const string asking_us
 		return -1;
 	}
 
-	// Set user as unavailable
+	// Set user as unavailable if has accepted the talk request
 	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
-	client_data->available = false;
+	client_data->available = !is_accepting;
 	mutex_available.unlock();
+
+	// Reset end-talk flag
+	unique_lock<mutex> mutex_end_talk(client_data->end_talk_mutex);
+	client_data->is_talk_ended = false;
+	mutex_end_talk.unlock();
 
 	// Set chosen user to talk
 	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
@@ -464,10 +469,43 @@ int Server::notify_end_talk (const string& user)
 		return -1;
 	}
 
+	// Reset ready to talk
+	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
+	client_data->has_chosen_interlocutor = false;
+	talk_lock.unlock();
+
 	// Wake up waiting thread (main thread of socket)
 	unique_lock<mutex> end_talk_lock(client_data->end_talk_mutex);
 	client_data->is_talk_ended = true;
 	client_data->end_talk_cv.notify_all();
 
+	return 1;
+}
+
+/**
+ * // TODO
+ * @param username 
+ * @param status 
+ * @return 1 on success, -1 on failure 
+ */
+int Server::set_talk_exit_status(const string& username, const int status)
+{
+	// Acquire lock for reading the client data's container
+	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+
+	connection_data* client_data;
+
+	// Check if client is online
+	try {
+		client_data = connected_client.at(username);
+
+	} catch (const out_of_range& ex) {
+		cerr << "[Thread " << this_thread::get_id() << "] Server::wait_end_talk: "
+		<< "user " << username << " is not logged" << endl;
+		return -1;
+	}
+
+	unique_lock<mutex> m(client_data->end_talk_mutex);
+	client_data->talk_exit_status = status;
 	return 1;
 }
