@@ -25,49 +25,54 @@ using namespace std;
 
 
 class Client {
-    int sockfd = 0;
-    string name;
-    string password;
+    // Connection data {
+    int server_socket = 0;
     sockaddr_in server_addr;
-    string ip = "127.0.0.1";
+    const string ip = "127.0.0.1";
     const uint16_t port;
 
+    const string username1;
+    const string password;
+
+    unsigned char* session_key = nullptr;
+    size_t session_key_len = 0;
+    // }
+
 public:
+    // Files {
+
+	static const string keys_folder;
+    static const string keys_extension;
+    static const string filename_CA_certificate;
+    static const string filename_crl;
+    
+    // }
+
+    // Constructor {
+    
     Client(const uint16_t _port, const string _name, const string _password);
-    ~Client();
+
+    // }
+
+    
+
+    // Connection with the server {
+    
     bool configure_socket();
     bool connects();
     void exit();
-    void str_overwrite_stdout();
-    void str_trim_lf (char* arr, int length);
-    sockaddr_in get_server_addr();
-    int get_sock();
 
-    string get_username ();
-    string get_password();
+    // }
 
     static bool does_username_exist(const string& username);
-};
 
-class ClientThread {
-	Client* client;
-	int server_socket;
-	sockaddr_in server_address;
-    unsigned char* session_key;
-    size_t session_key_len;
+	
 
-	const string keys_folder = "keys/";
-    const string filename_CA_certificate = keys_folder + "FoundationsOfCybersecurity_cert.pem";
-    const string filename_crl = keys_folder + "FoundationsOfCybersecurity_crl.pem";
-
-
-public:
-	ClientThread(Client* cli, const int socket, const sockaddr_in addr);
 	void run();
     static int send_message (const int socket, void* msg, const uint32_t msg_len);
 	static long receive_message (const int socket, void** msg);
-    DH* get_dh2048();
-    int negotiate(const string& username);
+    static DH* get_dh2048();
+    int negotiate();
     EVP_PKEY* generate_key_dh();
 	EVP_PKEY* get_client_private_key();
     int receive_from_server_pub_key(EVP_PKEY*& peer_key);
@@ -87,7 +92,7 @@ public:
     unsigned char* generate_iv(EVP_CIPHER const* cipher, size_t& iv_len);
     int talk();
     int receive_response_command_to_server();
-    void print_command();
+    void print_command_options();
     int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
     int show(unsigned char* shared_key);
     uint8_t get_message_type(const unsigned char* msg);
