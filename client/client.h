@@ -86,14 +86,14 @@ public:
     int receive_response_command_to_server();
     void print_command();
     int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
-    int show(const string& username, unsigned char* shared_key);
-    uint8_t get_request_type(const unsigned char* msg);
+    int show(unsigned char* shared_key);
+    uint8_t get_message_type(const unsigned char* msg);
     int send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
     int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key);
     int exit_by_application(unsigned char* shared_key);
     int receive_request_to_talk(unsigned char* session_key);
     int send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key);
-    int recive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
+    int receive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
 };
 
 

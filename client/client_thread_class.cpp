@@ -159,7 +159,7 @@ void ClientThread::run()
 			}
 		}
 		else if (command == "1") {
-			ret = show(username, session_key);
+			ret = show(session_key);
 			if (ret < 0) {
 				cout<<"error show()"<<endl;
 				break;
@@ -259,8 +259,8 @@ int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
 
 
 
-	uint8_t request_type = get_request_type(plaintext);
-	if (request_type == SERVER_ERR) {
+	uint8_t message_type = get_message_type(plaintext);
+	if (message_type == SERVER_ERR) {
 		return -1;
 	}
 	secure_free(plaintext, plaintext_len);
@@ -419,8 +419,8 @@ int ClientThread::receive_request_to_talk(unsigned char* session_key) {
 		}
 		return -1;
 	}
-	uint8_t request_type = get_request_type(plaintext);
-	if (request_type==SERVER_REQUEST_TO_TALK) {
+	uint8_t message_type = get_message_type(plaintext);
+	if (message_type==SERVER_REQUEST_TO_TALK) {
 		//TODO sleep run thread
 
 		//check is msg is valid (is a null terminated string)
@@ -738,24 +738,19 @@ int ClientThread::send_message_to_client(unsigned char* clients_session_key, uns
 
 
 
-
-
-
-
-
-
-int ClientThread::recive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key) {
+int ClientThread::receive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key) 
+{
 	string message;
-	int ret = 0;
 	unsigned char* plaintext_from_server = nullptr;
 	size_t plaintext_from_server_len = 1;
 	bool control = true;
+
 	while(true) {
 		try {
 			//receive it
 			int ret = receive_plaintext(main_server_socket, plaintext_from_server, plaintext_from_server_len, server_session_key);
 			if (ret <= 0) {
-					cerr << "[Thread " << this_thread::get_id() << "] recive_message_from_client: "
+					cerr << "[Thread " << this_thread::get_id() << "] receive_message_from_client: "
 					<< "error receive message from server" << endl;
 					throw 1;
 			}
@@ -767,8 +762,8 @@ int ClientThread::recive_message_from_client(unsigned char* clients_session_key,
 			control = false;
 			break;
 		}
-		uint8_t request_type = get_request_type(plaintext_from_server);
-		if (request_type == SERVER_ERR) {
+		uint8_t message_type = get_message_type(plaintext_from_server);
+		if (message_type == SERVER_ERR) {
 			return -1;
 		}
 		//TODO get message
@@ -865,84 +860,64 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 	return 1;
 }
 
-//for showing list of username
-int ClientThread::show(const string& username, unsigned char* shared_key) {
-	list<string> l;
-	size_t message_len = 1;
-	uint32_t string_size = username.length() + 1;
+/**
+ * Execute the function "show" of the application, i.e. send a request 
+ * to the server for the list of all the online users which are available
+ * to talking.
+ * 
+ * @param shared_key key shared between client and server
+ * 
+ * @return 1 on success, -1 on failure
+ */
+int ClientThread::show(unsigned char* shared_key) 
+{
 	unsigned char* msg_received = nullptr;
 	size_t msg_received_len = 0;
-	long ret_long = -1;
-	unsigned char* iv = nullptr;
-	unsigned char* ciphertext = nullptr;
-	unsigned char* tag = nullptr;
-	size_t tag_len=0;
-	size_t ciphertext_len = 0;
-	size_t iv_len=0;
 
-	//Allocate message
-	char* message = (char*)malloc(message_len);
-	if (!message) {
+	// Prepare request for show 
+	char message[1] = {TYPE_SHOW};
+
+	// Send message to server
+	int ret = send_plaintext(main_server_socket, (unsigned char*)message, 1, shared_key);
+	if (ret <= 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] show: "
+		<< "error send message to server" << endl;
 		return -1;
 	}
-	//forge message type
-	uint8_t* type = (uint8_t*)&message[0];
-	*type = TYPE_SHOW;
-	try {
-		//send message to server
-		int ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, shared_key);
-		if (ret <= 0) {
-				cerr << "[Thread " << this_thread::get_id() << "] show: "
-				<< "error send message to server" << endl;
-				throw 1;
-		}
-		secure_free(message, message_len);
-		//receive response by server
-		ret = receive_plaintext(main_server_socket, msg_received, msg_received_len, shared_key);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] show: "
-			<< "error receive response" << endl;
-			throw 1;
-		}
-	} catch (int e) {
-		if (e >= 1) {
-			secure_free(msg_received, msg_received_len);
-		}
+
+	// Receive response from the server
+	ret = receive_plaintext(main_server_socket, msg_received, msg_received_len, shared_key);
+	if (ret <= 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] show: "
+		<< "error receive response" << endl;
 		return -1;
 	}
-	uint8_t request_type = get_request_type(msg_received);
-	if (request_type == SERVER_ERR) {
+
+	// Check if the header the the response is correct
+	uint8_t message_type = get_message_type(msg_received);
+	if (message_type != SERVER_OK) {
+		cerr << "[Thread " << this_thread::get_id() << "] show: "
+		<< "wrong received message type" << endl;
+		free(msg_received);
 		return -1;
 	}
-	//Print usernames list
-	bool controller = false;
-	int cronolig = 1;
-	if (request_type == SERVER_OK) {
-		for (int i = 5; i<msg_received_len+1; i++) {
-			if (msg_received[i] != NULL) {
-				controller = true;
-				cout<<msg_received[i];
-			}
-			else {
-				if (controller == true) {
-					cout<<endl;
-					cout<<endl;
-					controller = false;
-					cronolig += 1;
-				}
-			}
-		}
-		cout<<endl;
-		cout<<endl;
+
+	// Check if received message is a null terminated string
+	if (msg_received[msg_received_len - 1] != '\0') {
+		cerr << "[Thread " << this_thread::get_id() << "] show: "
+		<< "wrong received message format" << endl;
+		free(msg_received);
+		return -1;
 	}
-	
 
+	// Print the username list
+	for (size_t i = 1 + sizeof(uint32_t); i < msg_received_len; i += sizeof(uint32_t)) {
+		cout << (char*)(msg_received + 1) << endl;
+	}
 
+	cout << endl;
 
-
-
-
-	//secure_free(msg_received, msg_received_len);
+	free(msg_received);
 
 	return 1;
 }
@@ -976,7 +951,7 @@ int ClientThread::exit_by_application(unsigned char* shared_key) {
 }
 
 
-uint8_t ClientThread::get_request_type(const unsigned char* msg)
+uint8_t ClientThread::get_message_type(const unsigned char* msg)
 {
 	return (uint8_t)msg[0];
 }
@@ -2349,10 +2324,13 @@ unsigned char* ClientThread::generate_iv (EVP_CIPHER const* cipher, size_t& iv_l
 
 
 
-int ClientThread::receive_response_command_to_server() {
-
+int ClientThread::receive_response_command_to_server()
+{
+	return -1; // TODO
 }
-void ClientThread::print_command() {
+
+void ClientThread::print_command() 
+{
 	cout<<"Select command:"<<endl;
 	cout<<"0 : talk"<<endl;
 	cout<<"1 : show"<<endl;
