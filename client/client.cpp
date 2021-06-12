@@ -49,8 +49,12 @@ int main(int argc, char** argv)
     cout << "Please enter your name: ";
     cin >> username;
     if (username.length() > 32 || username.length() < 2) {
-		cout << "Name must be less than 30 and more than 2 characters.";
+		cerr << "Name must be less than 30 and more than 2 characters.";
 	}
+
+    if(!Client::does_username_exist(username)) {
+        cerr << "Username " << username << " doesn't exist" << endl;
+    }
 
     // Ask user the password for client's private key
     string password;
@@ -74,9 +78,5 @@ int main(int argc, char** argv)
     thread tt(receive_thread, &client, client.get_sock(), client.get_server_addr());*/
     thread t(thread_main, &client, client.get_sock(), client.get_server_addr());
     t.join(); // TODO remove
-    while (true)
-    {
-        
-    }
     //client.exit();
 }

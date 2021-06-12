@@ -68,3 +68,15 @@ int Client::get_sock() {
 sockaddr_in Client::get_server_addr() {
     return server_addr;
 }
+
+bool Client::does_username_exist(const string& username)
+{
+    string filename = "keys/" + username + "_privkey.pem";
+    FILE* file = fopen(filename.c_str(), "r");
+    if (!file) {
+        return false;
+    }
+    
+    fclose(file);
+    return true;
+}

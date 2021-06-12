@@ -217,7 +217,7 @@ int Server::remove_client (const string& username)
 	}
 
 	// Remove key
-	#pragma optimize("", off)
+	#pragma optimize("", off) // TODO
 		memset((void*) client_data->key, 0, client_data->key_len);
 	#pragma optimize("", on)
 	free((void*) client_data->key);
