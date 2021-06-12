@@ -869,7 +869,7 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
  * 
  * @return 1 on success, -1 on failure
  */
-int ClientThread::show(unsigned char* shared_key) 
+int ClientThread::show (unsigned char* shared_key) 
 {
 	unsigned char* msg_received = nullptr;
 	size_t msg_received_len = 0;
@@ -910,9 +910,21 @@ int ClientThread::show(unsigned char* shared_key)
 		return -1;
 	}
 
+	cout << endl << "ONLINE USERS:" << endl;
+
 	// Print the username list
-	for (size_t i = 1 + sizeof(uint32_t); i < msg_received_len; i += sizeof(uint32_t)) {
-		cout << (char*)(msg_received + 1) << endl;
+	size_t i = 1;
+	while (i < msg_received_len) {
+		// Extract length of username
+		uint32_t username_len;
+		memcpy(&username_len, msg_received + i, sizeof(username_len));
+		username_len = ntohl(username_len);
+
+		i += sizeof(username_len);
+
+		cout << (char*)(msg_received + i) << endl;
+
+		i += username_len;
 	}
 
 	cout << endl;
@@ -922,7 +934,7 @@ int ClientThread::show(unsigned char* shared_key)
 	return 1;
 }
 
-int ClientThread::exit_by_application(unsigned char* shared_key) {
+int ClientThread::exit_by_application(unsigned char* shared_key) { // TODO here|
 	size_t message_len = 1;
 	//Allocate message
 	char* message = (char*)malloc(message_len);
