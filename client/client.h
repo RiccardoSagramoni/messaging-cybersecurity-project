@@ -18,9 +18,27 @@
 #include <openssl/pem.h>
 #include <list>
 #include <iomanip>
+#include <condition_variable>
 
 using namespace std;
 
+class thread_bridge {
+	mutex mx_new_msg;
+	condition_variable cv_new_msg;
+	bool is_msg_ready = false;
+	unsigned char* new_msg = nullptr;
+	size_t new_msg_len = 0;
+
+	mutex mx_request_talk;
+	condition_variable cv_request_talk;
+	bool has_received_request_to_talk = false;
+
+public:
+	unsigned char* wait_for_new_message (size_t& msg_len);
+	void insert_new_message(unsigned char* msg, size_t msg_len);
+	bool check_request_talk();
+	int notify_request_talk();
+};
 
 class Client {
 	// Connection data {
