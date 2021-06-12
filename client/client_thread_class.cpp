@@ -3,8 +3,8 @@
 ClientThread::ClientThread(Client* cli, const int socket, const sockaddr_in addr)
 {
     client=cli;
-	main_server_socket = socket;
-	main_server_address = addr;
+	server_socket = socket;
+	server_address = addr;
 }
 
 
@@ -135,12 +135,11 @@ long ClientThread::receive_message (const int socket, void** msg)
 void ClientThread::run()
 {
 	int ret;
-	unsigned char* session_key = nullptr;
-	size_t session_key_len = 0;
 
 	string username = client->get_username();
-    ret = negotiate(username, session_key, session_key_len);
+    ret = negotiate(username);
 	if (ret < 0) return;
+
 	while (true) {
 		string command;
 		print_command();
@@ -148,7 +147,7 @@ void ClientThread::run()
 		cout<<"insert command:  ";
 		cin>>command;
 		if (command == "0") {
-			ret = talk(session_key, session_key_len);
+			ret = talk();
 			if (ret < 0) {
 				cout<<"error talk()"<<endl;
 				break;
@@ -186,108 +185,117 @@ void ClientThread::run()
 }
 
 //for send a request to talk to another client
-int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
+int ClientThread::talk () 
+{
 	int ret = 0;
 	char* message = nullptr;
 	size_t message_len = 1;
-	string user_buf;
+	string peer_username;
 	unsigned char* plaintext = nullptr;
 	size_t plaintext_len = 0;
-	unsigned char* clients_session_key = nullptr;
-	size_t clients_session_key_lenght = 0;
 	
+	//TODO sleep thread receive request to talk
 
+	//get user to talk
+	cout << "insert username of the client:  ";
+	cin >> peer_username;
+	if (peer_username.empty()) {
+		return -1;
+	}
 
+	//store username_lenght
+	message_len += sizeof(uint32_t) + peer_username.length() + 1;
+	//allocate msg
+	message = (char*)malloc(message_len);
+	if (!message) {
+		return -1;
+	}
 
-		//TODO sleep thread receive request to talk
+	// craft msg
+	uint8_t* type = (uint8_t*)&message[0];
+	*type = TYPE_TALK;
 
+	// insert username length
+	uint32_t string_size = peer_username.length() + 1;
+	string_size = htonl(string_size);
+	memcpy(message + 1, &string_size, sizeof(string_size));
 
+	// insert username
+	memcpy(message + 1 + sizeof(string_size), peer_username.c_str(), peer_username.length() + 1);
 
-
-		//get user to talk
-		cout<<"insert username of the client:  ";
-		cin>>user_buf;
-		if (user_buf.empty()) {
-			return -1;
-		}
-
-		//store username_lenght
-		message_len += sizeof(uint32_t) + user_buf.length() + 1;
-		//allocate msg
-		message = (char*)malloc(message_len);
-		if (!message) {
-			return -1;
-		}
-
-		//craft msg
-		uint8_t* type = (uint8_t*)&message[0];
-		*type = TALKING;;
-		//insert username length
-		uint32_t string_size = strlen(user_buf.c_str()) + 1;
-		string_size = htonl(string_size);
-		memcpy(message + 1, &string_size, sizeof(string_size));
-		//insert username
-		memcpy(message + 5, user_buf.c_str(), user_buf.length() + 1);
-		if (!message) {
-			return -1;
-		}
-
-	try
-	{
-		//send messsage to server
-		ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, session_key);
+	try {
+		// send messsage to server
+		ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "erro send message to server" << endl;
-			throw 4;
+			throw 0;
 		}
-		//receive ok by server
-		ret = receive_plaintext(main_server_socket, plaintext, plaintext_len, session_key);
+
+		free(message);
+
+		// receive ok from server
+		ret = receive_plaintext(server_socket, plaintext, plaintext_len, session_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error receive response" << endl;
-			throw 4;
+			throw 1;
 		}
 	} catch (int e) {
-		if (e >= 4) {
-			secure_free(plaintext, plaintext_len);
-			secure_free(message, message_len);
+		if (e >= 1) {
+			free(plaintext);
 		}
 		return -1;
 	}
-	secure_free(message, message_len);
 
-
-
+	// Extract message type
 	uint8_t message_type = get_message_type(plaintext);
-	if (message_type == SERVER_ERR) {
-		return -1;
-	}
-	secure_free(plaintext, plaintext_len);
-
-
-
-
-	//craft and send g**a
-	//generate g^a
-	EVP_PKEY* my_dh_key = generate_key_dh();
-	if (!my_dh_key) {
+	if (message_type != SERVER_OK) {
 		cerr << "[Thread " << this_thread::get_id() << "] talk: "
-		<< "error generate key" << endl;
+		<< "request to talk failed" << endl;
+		return -1;
+	}
+	free(plaintext);
+
+	// DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
+	unsigned char* clients_session_key = nullptr;
+	size_t clients_session_key_lenght = 0;
+	ret = negotiate_key_with_client(clients_session_key, clients_session_key_lenght);
+	if (ret < 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] talk: "
+		<< "negotiation key failed" << endl;
 		return -1;
 	}
 
+	// TODO !!!!!!!!
 
+	secure_free(clients_session_key, clients_session_key_lenght);
+	return 1;
+}
 
+// DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
+int ClientThread::negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len)
+{
+	int ret;
+	EVP_PKEY* my_dh_key;
 	BIO* mbio = nullptr;
 	char* pubkey_buf = nullptr;
 	uint32_t pubkey_size = 0;
 	BIO* mem_bio = nullptr;
-		unsigned char* key = nullptr;
+	unsigned char* key = nullptr;
 	EVP_PKEY* peer_key = nullptr;
 	size_t key_len = 0;
+
 	try {
-		//serialize my_dh_key
+		// generate g^a
+		my_dh_key = generate_key_dh();
+		if (!my_dh_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error generate key" << endl;
+			throw 0;
+		}
+
+		// serialize my_dh_key
 		mbio = BIO_new(BIO_s_mem());
 		if (!mbio) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
@@ -299,29 +307,28 @@ int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error write bio" << endl;
-			throw 1;
+			throw 2;
 		}
 		
 		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
 		if (ret_long <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error get mem bio pub key" << endl;
-			throw 1;
+			throw 2;
 		}
 		pubkey_size = (uint32_t)ret_long;
-		//send g^a
-		ret = send_plaintext(main_server_socket, (unsigned char*)pubkey_buf, pubkey_size, session_key);
+
+		// send g^a
+		ret = send_plaintext(server_socket, (unsigned char*)pubkey_buf, pubkey_size, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error sending pub key" << endl;
-			throw 2;
+			throw 3;
 		}
 
 
-
-
 		//receive g^b and deserialize it
-		ret = receive_plaintext(main_server_socket, key, key_len, session_key);
+		ret = receive_plaintext(server_socket, key, key_len, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error receive client key" << endl;
@@ -339,58 +346,54 @@ int ClientThread::talk(unsigned char* session_key, size_t session_key_len) {
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error bio_write" << endl;
-			throw 4;
+			throw 5;
 		}
+
 		peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
 		if (!peer_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error pem read" << endl;
-			throw 4;
+			throw 5;
 		}
-	
 
 
 		//get session key for clients comunications
-		clients_session_key_lenght = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
-		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_lenght);
+		clients_session_key_len = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
+		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_len);
 		if (!clients_session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error derive session key" << endl;
 			throw 5;
 		}
+		
 
-
-
-	}catch (int e) {
+	} catch (int e) {
 		if (e >= 5) {
-			secure_free(clients_session_key, clients_session_key_lenght);
-		}
-		if (e >= 4) {
 			BIO_free(mem_bio);
 		}
-		if (e >= 3) {
+		if (e >= 4) {
 			secure_free(key, key_len);
 		}
-		if (e >= 2) {
+		if (e >= 3) {
 			secure_free(pubkey_buf, pubkey_size);
 		}
-		if (e >= 1) {
+		if (e >= 2) {
 			BIO_free(mbio);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(my_dh_key);
 		}
 		return -1;
 	}
+
 	BIO_free(mem_bio);
 	secure_free(key, key_len);
 	secure_free(pubkey_buf, pubkey_size);
 	BIO_free(mbio);
+	EVP_PKEY_free(my_dh_key);
 
-
-	secure_free(clients_session_key, clients_session_key_lenght);
 	return 1;
 }
-
-
-
 
 
 //receive request to talk from another client
@@ -407,7 +410,7 @@ int ClientThread::receive_request_to_talk(unsigned char* session_key) {
 
 	try {
 		//receive ok by server
-		ret = receive_plaintext(main_server_socket, plaintext, plaintext_len, session_key);
+		ret = receive_plaintext(server_socket, plaintext, plaintext_len, session_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
 			<< "error receive message from server" << endl;
@@ -467,7 +470,7 @@ int ClientThread::receive_request_to_talk(unsigned char* session_key) {
 			}
 			try {
 				//send message to server for accepting
-				int ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, session_key);
+				int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 				if (ret <= 0) {
 					cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
 					<< "error send message to server for accept" << endl;
@@ -496,7 +499,7 @@ int ClientThread::receive_request_to_talk(unsigned char* session_key) {
 			*type = REFUSE_TALK;
 			try {
 				//send message to server for refusing
-				int ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, session_key);
+				int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 				if (ret <= 0) {
 					cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
 					<< "error send message to server for refuse" << endl;
@@ -565,7 +568,7 @@ int ClientThread::receive_request_to_talk(unsigned char* session_key) {
 
 
 		//receive g^a and deserialize it
-		ret = receive_plaintext(main_server_socket, key, key_len, session_key);
+		ret = receive_plaintext(server_socket, key, key_len, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
 			<< "error receive client key" << endl;
@@ -594,7 +597,7 @@ int ClientThread::receive_request_to_talk(unsigned char* session_key) {
 
 
 		//send g^a
-		ret = send_plaintext(main_server_socket, (unsigned char*)pubkey_buf, pubkey_size, session_key);
+		ret = send_plaintext(server_socket, (unsigned char*)pubkey_buf, pubkey_size, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
 			<< "error sending pub key" << endl;
@@ -698,7 +701,7 @@ int ClientThread::send_message_to_client(unsigned char* clients_session_key, uns
 			memcpy(final_ciphertext + iv_len + ciphertext_len + 1, tag, tag_len + 1);
 
 			//send it
-			int ret = send_plaintext(main_server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, server_session_key);
+			int ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, server_session_key);
 			if (ret <= 0) {
 					cerr << "[Thread " << this_thread::get_id() << "] send_message_to_client: "
 					<< "error send message to server" << endl;
@@ -748,7 +751,7 @@ int ClientThread::receive_message_from_client(unsigned char* clients_session_key
 	while(true) {
 		try {
 			//receive it
-			int ret = receive_plaintext(main_server_socket, plaintext_from_server, plaintext_from_server_len, server_session_key);
+			int ret = receive_plaintext(server_socket, plaintext_from_server, plaintext_from_server_len, server_session_key);
 			if (ret <= 0) {
 					cerr << "[Thread " << this_thread::get_id() << "] receive_message_from_client: "
 					<< "error receive message from server" << endl;
@@ -822,7 +825,7 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 
 		//Send messages
 		//Send iv
-		ret = send_message(main_server_socket, (void*)iv, iv_len);
+		ret = send_message(server_socket, (void*)iv, iv_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
 			<< "send_message iv failed" << endl;
@@ -830,7 +833,7 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 		}
 		
 		//Send crypted msg
-		ret = send_message(main_server_socket, (void*)ciphertext, ciphertext_len);
+		ret = send_message(server_socket, (void*)ciphertext, ciphertext_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
 			<< "send_message encrypted_msg" << endl;
@@ -838,7 +841,7 @@ int ClientThread::send_command_to_server(unsigned char* msg, unsigned char* shar
 		}
 
 		//Send tag
-		ret = send_message(main_server_socket, (void*)tag, tag_len);
+		ret = send_message(server_socket, (void*)tag, tag_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
 			<< "send_message tag failed" << endl;
@@ -878,7 +881,7 @@ int ClientThread::show (unsigned char* shared_key)
 	char message[1] = {TYPE_SHOW};
 
 	// Send message to server
-	int ret = send_plaintext(main_server_socket, (unsigned char*)message, 1, shared_key);
+	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, shared_key);
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "error send message to server" << endl;
@@ -886,7 +889,7 @@ int ClientThread::show (unsigned char* shared_key)
 	}
 
 	// Receive response from the server
-	ret = receive_plaintext(main_server_socket, msg_received, msg_received_len, shared_key);
+	ret = receive_plaintext(server_socket, msg_received, msg_received_len, shared_key);
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "error receive response" << endl;
@@ -946,7 +949,7 @@ int ClientThread::exit_by_application(unsigned char* shared_key) { // TODO here|
 	*type = TYPE_EXIT;
 	try {
 		//send message to server
-		int ret = send_plaintext(main_server_socket, (unsigned char*)message, message_len, shared_key);
+		int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, shared_key);
 		if (ret <= 0) {
 				cerr << "[Thread " << this_thread::get_id() << "] exit_by_application: "
 				<< "error send message to server" << endl;
@@ -970,7 +973,7 @@ uint8_t ClientThread::get_message_type(const unsigned char* msg)
 
 
 //negotiation of key and autentication with server
-int ClientThread::negotiate(const string& username, unsigned char*& session_key, size_t& session_key_len) 
+int ClientThread::negotiate(const string& username) 
 {
     int ret;
 	X509* cert=nullptr;
@@ -988,66 +991,75 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
     EVP_PKEY* peer_key = nullptr;
 	unsigned char* ciphertext = nullptr;
 	size_t ciphertext_len = 0;
-
-    //generate g^a
-    EVP_PKEY* my_dh_key = generate_key_dh();
-	if (!my_dh_key) {
-		cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
-		<< "error generate key" << endl;
-		return -1;
-	}
+    EVP_PKEY* my_dh_key;
 
 	try {
-		//malloc username
+		// 1) Generate client's part of DH key, i.e. g**a
+		my_dh_key = generate_key_dh();
+		if (!my_dh_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "error generate key" << endl;
+			throw 0;
+		}
+		
+		// 2) Send username to server
+		// 2a) Allocate buffer for username
 		username_c = (char*)malloc(username.length() + 1);
 		if (!username_c) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error malloc username" << endl;
-			throw 0;
+			throw 1;
 		}
     	strcpy(username_c, username.c_str());
 
-		//send username to the server
-    	ret = send_message(main_server_socket, (void*)username_c, (uint32_t)strlen(username_c) + 1);
+		// 2b) Send to server
+    	ret = send_message(server_socket, (void*)username_c, username.length() + 1);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error send username" << endl;
-			throw 1;
+			throw 2;
 		}
-		//serialize my_dh_key
-    	mbio = BIO_new(BIO_s_mem());
+
+
+		// 3) Serialize my_dh_key
+    	mbio = BIO_new(BIO_s_mem()); // Allocate BIO
     	if (!mbio) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error bio_new" << endl;
-			throw 1;
+			throw 2;
 		}
 
-		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
+		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key); // Serialize key in BIO
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error write bio" << endl;
-			throw 2;
+			throw 3;
 		}
 		
-		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
+		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf); // Extract key from BIO
 		if (ret_long <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error get mem bio pub key" << endl;
-			throw 2;
+			throw 3;
 		}
 		uint32_t pubkey_size = (uint32_t)ret_long;
-		//send g^a
-		ret = send_message(main_server_socket, (void*)pubkey_buf, pubkey_size);
+		
+		// 4) Send g**a
+		ret = send_message(server_socket, (void*)pubkey_buf, pubkey_size);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error sending pub key" << endl;
-			throw 2;
+			throw 3;
 		}
 		
 
-		// Second step protocol (receive public key from server)
+		// 5) Second step of the protocol (receive public key from server)
 		ret = receive_from_server_pub_key(peer_key);
-		if (ret < 0) throw 2;
+		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			<< "receive_from_server_pub_key failed" << endl;
+			throw 3;
+		}
 
 		//derive session key
 		session_key_len = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
@@ -1055,42 +1067,43 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (!session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error derive session key" << endl;
-			throw 2;
+			throw 5;
 		}
+
 		//receive iv (initialization vector)
-		ret = receive_message(main_server_socket, (void**)&iv);
+		ret = receive_message(server_socket, (void**)&iv);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error receive iv" << endl;
-			throw 5;
+			throw 6;
 		}
 
 		iv_len=ret;
 		//receive crypto sign
-		ret = receive_message(main_server_socket, (void**)&ciphertext);
+		ret = receive_message(server_socket, (void**)&ciphertext);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error receive crypto sign" << endl;
-			throw 3;
+			throw 7;
 		}
 
 		ciphertext_len = ret;
 
 
 		//receive tag
-		ret = receive_message(main_server_socket, (void**)&tag);
+		ret = receive_message(server_socket, (void**)&tag);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error receive tag" << endl;
-			throw 4;
+			throw 8;
 		}
 
 		//receive certificate of the server
-		ret = receive_message(main_server_socket, (void**)&ser_certificate);
+		ret = receive_message(server_socket, (void**)&ser_certificate);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error receive certificate" << endl;
-			throw 4;
+			throw 9;
 		}
 		ser_certificate_len = ret;
 
@@ -1099,7 +1112,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (!cert) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error deserialize certificate" << endl;
-			throw 4;
+			throw 10;
 		}
 
 		//get certificate from file
@@ -1107,7 +1120,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (cert_CA == NULL) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error server certificate" << endl;
-			throw 4;
+			throw 11;
 		}
 
 		//get crl from file
@@ -1115,7 +1128,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (!crl_CA) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error crl" << endl;
-			throw 4;
+			throw 12;
 		}
 
 		// build store, add certificate, add crl and check validity
@@ -1123,7 +1136,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error build store and check validity" << endl;
-			throw 4;
+			throw 13;
 		}
 
 		// Extract public key from certificate
@@ -1131,7 +1144,7 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (public_key_from_cert == NULL) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error exract pub key from cert" << endl;
-			throw 4;
+			throw 13;
 		}
 		
 		//decrypt and verify server signature
@@ -1139,44 +1152,72 @@ int ClientThread::negotiate(const string& username, unsigned char*& session_key,
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error verifying server sign" << endl;
-			throw 6;
+			throw 14;
 		}
 		//crypt sign and send it
 		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error sending sign" << endl;
-			throw 6;
+			throw 14;
 		}
 
 	} catch (int e) {
+		if (e >= 14) {
+			EVP_PKEY_free(public_key_from_cert);
+		}
+		if (e >= 13) {
+			X509_CRL_free(crl_CA);
+		}
+		if (e >= 12) {
+			X509_free(cert_CA);
+		}
+		if (e >= 11) {
+			X509_free(cert);
+		}
+		if (e >= 10) {
+			free(ser_certificate);
+		}
+		if (e >= 9) {
+			free(tag);
+		}
+		if (e >= 8) {
+			free(ciphertext);
+		}
+		if (e >= 7) {
+			free(iv);
+		}
 		if (e >= 6) {
-			secure_free(iv,iv_len);
+			secure_free(session_key, session_key_len);
 		}
 		if (e >= 5) {
-			secure_free(ser_certificate, ser_certificate_len);
-		}
-		if (e >= 4) {
-			secure_free(ciphertext, ciphertext_len);
+			EVP_PKEY_free(peer_key);
 		}
 		if (e >= 3) {
-			//secure_free(session_key, session_key_len);
-		}
-		if (e >= 2) {
 			BIO_free(mbio);
 		}
-		if (e >= 1) {
+		if (e >= 2) {
 			free(username_c);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(my_dh_key);
 		}
 		return -1;
 	}
 
-	secure_free(iv,iv_len);
-	secure_free(ser_certificate, ser_certificate_len);
-	secure_free(ciphertext, ciphertext_len); // ? bug
-	//secure_free(session_key, session_key_len);
+	EVP_PKEY_free(public_key_from_cert);
+	X509_CRL_free(crl_CA);
+	X509_free(cert_CA);
+	X509_free(cert);
+	free(ser_certificate);
+	free(tag);
+	free(ciphertext);
+	free(iv);
+	EVP_PKEY_free(peer_key);
 	BIO_free(mbio);
 	free(username_c);
+	EVP_PKEY_free(my_dh_key);
+	
 	return 1;
 }
 
@@ -1382,7 +1423,7 @@ int ClientThread::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
     int ret_int;
 	long ret_long;
     char* key = nullptr;
-	ret_long = receive_message(main_server_socket, (void**)&key);
+	ret_long = receive_message(server_socket, (void**)&key);
 	if (ret_long <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] receive_from_server_pub_key: "
 		<< "error receive message" << endl;
@@ -1767,7 +1808,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned cha
 	
 		// 5) Send messages
 		// 5a) Send iv
-		ret = send_message(main_server_socket, (void*)iv, iv_len);
+		ret = send_message(server_socket, (void*)iv, iv_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message iv failed" << endl;
@@ -1775,7 +1816,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned cha
 		}
 		
 		// 5b) send crypted signature
-		ret = send_message(main_server_socket, (void*)encrypted_sign, encrypted_sign_len);
+		ret = send_message(server_socket, (void*)encrypted_sign, encrypted_sign_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message encrypted_signature" << endl;
@@ -1783,7 +1824,7 @@ int ClientThread::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned cha
 		}
 
 		// 5c) Send tag
-		ret = send_message(main_server_socket, (void*)tag, tag_len);
+		ret = send_message(server_socket, (void*)tag, tag_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message tag failed" << endl;
@@ -2423,21 +2464,21 @@ int ClientThread::receive_plaintext (const int socket, unsigned char*& msg, size
 
 	try {
 		// 1) Receive iv
-		ret_long = receive_message(main_server_socket, (void**)&iv);
+		ret_long = receive_message(server_socket, (void**)&iv);
 		if (ret_long <= 0) {
 			throw 0;
 		}
 		size_t iv_len = ret_long;
 
 		// 2) Receive ciphertext
-		ret_long = receive_message(main_server_socket, (void**)&ciphertext);
+		ret_long = receive_message(server_socket, (void**)&ciphertext);
 		if (ret_long <= 0) {
 			throw 1;
 		}
 		size_t ciphertext_len = ret_long;
 
 		// 3) Receive tag
-		ret_long = receive_message(main_server_socket, (void**)&tag);
+		ret_long = receive_message(server_socket, (void**)&tag);
 		if (ret_long <= 0) {
 			throw 2;
 		}

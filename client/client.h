@@ -51,8 +51,11 @@ public:
 
 class ClientThread {
 	Client* client;
-	int main_server_socket;
-	sockaddr_in main_server_address;
+	int server_socket;
+	sockaddr_in server_address;
+    unsigned char* session_key;
+    size_t session_key_len;
+
 	const string keys_folder = "keys/";
     const string filename_CA_certificate = keys_folder + "FoundationsOfCybersecurity_cert.pem";
     const string filename_crl = keys_folder + "FoundationsOfCybersecurity_crl.pem";
@@ -64,7 +67,7 @@ public:
     static int send_message (const int socket, void* msg, const uint32_t msg_len);
 	static long receive_message (const int socket, void** msg);
     DH* get_dh2048();
-    int negotiate(const string& username, unsigned char*& session_key, size_t& session_key_len);
+    int negotiate(const string& username);
     EVP_PKEY* generate_key_dh();
 	EVP_PKEY* get_client_private_key();
     int receive_from_server_pub_key(EVP_PKEY*& peer_key);
@@ -82,7 +85,7 @@ public:
     int gcm_encrypt (unsigned char* plaintext, int plaintext_len, unsigned char* aad, int aad_len, unsigned char* key, unsigned char* iv, int iv_len, unsigned char*& ciphertext, size_t& ciphertext_len,unsigned char*& tag, size_t& tag_len);
     const EVP_CIPHER* get_authenticated_encryption_cipher();
     unsigned char* generate_iv(EVP_CIPHER const* cipher, size_t& iv_len);
-    int talk(unsigned char* session_key, size_t session_key_len);
+    int talk();
     int receive_response_command_to_server();
     void print_command();
     int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
@@ -94,6 +97,7 @@ public:
     int receive_request_to_talk(unsigned char* session_key);
     int send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key);
     int receive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
+    int negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len);
 };
 
 
