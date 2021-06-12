@@ -38,8 +38,8 @@ int main(int argc, char** argv)
         perror("configure_listener_socket() failed");
 		exit(EXIT_FAILURE);
     }
-    if (!client.connects()) {
-        perror("connects() failed");
+    if (!client.connect_to_server()) {
+        perror("connect_to_server() failed");
 		exit(EXIT_FAILURE);
     }
 

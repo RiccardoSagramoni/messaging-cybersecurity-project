@@ -14,6 +14,9 @@ ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in add
 	main_client_address = addr;
 }
 
+const string ServerThread::filename_prvkey = "privkey.pem";
+const string ServerThread::filename_certificate = "certificate.pem";
+
 /**
  * Start the thread
  */

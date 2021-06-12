@@ -1,7 +1,7 @@
 #include "client.h"
 
 Client::Client(const uint16_t _port, const string _username, const string _password) 
-    : port(_port), username1(_username), password(_password)
+	: port(_port), client_username(_username), client_password(_password)
 {
 
 }
@@ -9,8 +9,9 @@ Client::Client(const uint16_t _port, const string _username, const string _passw
 // Initialize static public strings
 const string Client::keys_folder = "keys/";
 const string Client::keys_extension = "_privkey.pem";
-const string filename_CA_certificate = Client::keys_folder + "FoundationsOfCybersecurity_cert.pem";
-const string filename_crl = Client::keys_folder + "FoundationsOfCybersecurity_crl.pem";
+const string Client::filename_CA_certificate = Client::keys_folder + 
+											   "FoundationsOfCybersecurity_cert.pem";
+const string Client::filename_crl = Client::keys_folder + "FoundationsOfCybersecurity_crl.pem";
 
 /**
  * Create and configure a new socket
@@ -19,94 +20,106 @@ const string filename_crl = Client::keys_folder + "FoundationsOfCybersecurity_cr
  */
 bool Client::configure_socket() 
 {
-    server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket < 0) {
-        cerr << "Error: socket creation failed" << endl;
-        return false;
-    }
+	server_socket = socket(AF_INET, SOCK_STREAM, 0);
+	if (server_socket < 0) {
+		cerr << "Error: socket creation failed" << endl;
+		return false;
+	}
 
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = inet_addr(ip.c_str());
-    server_addr.sin_port = htons(port);
+	server_addr.sin_family = AF_INET;
+	server_addr.sin_addr.s_addr = inet_addr(ip.c_str());
+	server_addr.sin_port = htons(port);
 
-    return true;
+	return true;
 }
 
-bool Client::connects() 
+bool Client::connect_to_server() 
 {
-    int ret = connect(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr));
-    if (ret < 0) {
+	int ret = connect(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr));
+	if (ret < 0) {
 		cerr << "Error: connect failed" << endl;
 		return false;
 	}
 
-    return true;
+	return true;
 }
 
-void Client::exit() {
-    close(server_socket);
+void Client::exit() 
+{
+	close(server_socket);
 }
 
+/**
+ * Check if specified user's key is installed on this computer
+ * 
+ * @param username id of user 
+ * @return true on success, false on failure
+ */
 bool Client::does_username_exist(const string& username)
 {
-    string filename = keys_folder + username + keys_extension;
-    FILE* file = fopen(filename.c_str(), "r");
-    if (!file) {
-        return false;
-    }
-    
-    fclose(file);
-    return true;
+	string filename = keys_folder + username + keys_extension;
+	FILE* file = fopen(filename.c_str(), "r");
+	if (!file) {
+		return false;
+	}
+	
+	fclose(file);
+	return true;
 }
 
+/**
+ * Generate public DH parameters for this application
+ * 
+ * @return DH parameters
+ */
 DH* Client::get_dh2048 ()
 {
-    static unsigned char dhp_2048[] = {
-        0xD8, 0x89, 0xF9, 0xAA, 0xE2, 0xE9, 0x09, 0x58, 0xED, 0xC5,
-        0xA3, 0xF4, 0xDD, 0x4A, 0x7A, 0x53, 0x56, 0xE3, 0x67, 0x05,
-        0x81, 0xC2, 0x26, 0xD1, 0xE1, 0xB8, 0xA9, 0x2B, 0x15, 0x2B,
-        0x1F, 0x06, 0x78, 0xFB, 0x39, 0xA9, 0xF9, 0xC1, 0xD4, 0xFF,
-        0x80, 0x73, 0x11, 0xDB, 0x40, 0x1C, 0xF7, 0x5A, 0x75, 0x5B,
-        0x5B, 0x41, 0x81, 0x84, 0x57, 0x34, 0xF6, 0x64, 0xEE, 0xB6,
-        0xA5, 0xE4, 0x2A, 0x75, 0xFF, 0x12, 0x13, 0xC5, 0xC4, 0x86,
-        0xA2, 0xDB, 0xF1, 0xAA, 0xCB, 0x79, 0x84, 0x02, 0xF1, 0x76,
-        0x80, 0xF2, 0x9A, 0xC3, 0xBD, 0x8B, 0x87, 0x75, 0x99, 0x00,
-        0x8D, 0x4F, 0x3E, 0x5E, 0x22, 0x74, 0xF3, 0x7A, 0xDE, 0x2D,
-        0x51, 0x14, 0xD4, 0xC4, 0xC0, 0xD6, 0xAA, 0x03, 0x0C, 0x17,
-        0xFB, 0x3E, 0x9B, 0xB5, 0x13, 0xD3, 0x8C, 0xD8, 0xDD, 0x74,
-        0x34, 0xC7, 0x31, 0xA4, 0x7A, 0x21, 0xD0, 0x07, 0xB6, 0x77,
-        0x74, 0x2E, 0xFE, 0x1B, 0xC0, 0x54, 0x81, 0xB6, 0x7B, 0x2D,
-        0x39, 0x7A, 0x1C, 0x4D, 0xE3, 0x23, 0xDF, 0xDF, 0x9D, 0x6F,
-        0x91, 0xFB, 0xB3, 0x0C, 0x5E, 0x87, 0x4E, 0x2D, 0x1D, 0x6B,
-        0xF1, 0x97, 0x24, 0xA2, 0x58, 0xE3, 0xF4, 0x81, 0x19, 0xE0,
-        0x33, 0x3B, 0x55, 0xAD, 0xA0, 0xBB, 0x44, 0x0A, 0xBF, 0x8F,
-        0xAC, 0xAD, 0xAD, 0x16, 0x8C, 0x69, 0x45, 0x28, 0x81, 0x1E,
-        0x9B, 0xA9, 0x0E, 0xB5, 0x02, 0x3D, 0xA1, 0xFD, 0x59, 0x6C,
-        0x40, 0xDC, 0x73, 0x8A, 0xA3, 0x45, 0x76, 0x27, 0x40, 0x4F,
-        0xBA, 0xEF, 0x20, 0x3A, 0x07, 0x3F, 0xDD, 0x8C, 0x69, 0x20,
-        0xF6, 0xE2, 0x28, 0xE7, 0x2D, 0x31, 0xE1, 0x56, 0xB2, 0x6B,
-        0x73, 0x03, 0x74, 0xBE, 0xA5, 0x3F, 0x43, 0x2E, 0xBD, 0xAB,
-        0x8A, 0x40, 0xC8, 0x3B, 0xCC, 0x74, 0x98, 0x7B, 0xB0, 0xCD,
-        0xED, 0xBA, 0x42, 0x29, 0x73, 0xD3
-    };
-    static unsigned char dhg_2048[] = {
-        0x02
-    };
-    DH *dh = DH_new();
-    BIGNUM *p, *g;
+	static unsigned char dhp_2048[] = {
+		0xD8, 0x89, 0xF9, 0xAA, 0xE2, 0xE9, 0x09, 0x58, 0xED, 0xC5,
+		0xA3, 0xF4, 0xDD, 0x4A, 0x7A, 0x53, 0x56, 0xE3, 0x67, 0x05,
+		0x81, 0xC2, 0x26, 0xD1, 0xE1, 0xB8, 0xA9, 0x2B, 0x15, 0x2B,
+		0x1F, 0x06, 0x78, 0xFB, 0x39, 0xA9, 0xF9, 0xC1, 0xD4, 0xFF,
+		0x80, 0x73, 0x11, 0xDB, 0x40, 0x1C, 0xF7, 0x5A, 0x75, 0x5B,
+		0x5B, 0x41, 0x81, 0x84, 0x57, 0x34, 0xF6, 0x64, 0xEE, 0xB6,
+		0xA5, 0xE4, 0x2A, 0x75, 0xFF, 0x12, 0x13, 0xC5, 0xC4, 0x86,
+		0xA2, 0xDB, 0xF1, 0xAA, 0xCB, 0x79, 0x84, 0x02, 0xF1, 0x76,
+		0x80, 0xF2, 0x9A, 0xC3, 0xBD, 0x8B, 0x87, 0x75, 0x99, 0x00,
+		0x8D, 0x4F, 0x3E, 0x5E, 0x22, 0x74, 0xF3, 0x7A, 0xDE, 0x2D,
+		0x51, 0x14, 0xD4, 0xC4, 0xC0, 0xD6, 0xAA, 0x03, 0x0C, 0x17,
+		0xFB, 0x3E, 0x9B, 0xB5, 0x13, 0xD3, 0x8C, 0xD8, 0xDD, 0x74,
+		0x34, 0xC7, 0x31, 0xA4, 0x7A, 0x21, 0xD0, 0x07, 0xB6, 0x77,
+		0x74, 0x2E, 0xFE, 0x1B, 0xC0, 0x54, 0x81, 0xB6, 0x7B, 0x2D,
+		0x39, 0x7A, 0x1C, 0x4D, 0xE3, 0x23, 0xDF, 0xDF, 0x9D, 0x6F,
+		0x91, 0xFB, 0xB3, 0x0C, 0x5E, 0x87, 0x4E, 0x2D, 0x1D, 0x6B,
+		0xF1, 0x97, 0x24, 0xA2, 0x58, 0xE3, 0xF4, 0x81, 0x19, 0xE0,
+		0x33, 0x3B, 0x55, 0xAD, 0xA0, 0xBB, 0x44, 0x0A, 0xBF, 0x8F,
+		0xAC, 0xAD, 0xAD, 0x16, 0x8C, 0x69, 0x45, 0x28, 0x81, 0x1E,
+		0x9B, 0xA9, 0x0E, 0xB5, 0x02, 0x3D, 0xA1, 0xFD, 0x59, 0x6C,
+		0x40, 0xDC, 0x73, 0x8A, 0xA3, 0x45, 0x76, 0x27, 0x40, 0x4F,
+		0xBA, 0xEF, 0x20, 0x3A, 0x07, 0x3F, 0xDD, 0x8C, 0x69, 0x20,
+		0xF6, 0xE2, 0x28, 0xE7, 0x2D, 0x31, 0xE1, 0x56, 0xB2, 0x6B,
+		0x73, 0x03, 0x74, 0xBE, 0xA5, 0x3F, 0x43, 0x2E, 0xBD, 0xAB,
+		0x8A, 0x40, 0xC8, 0x3B, 0xCC, 0x74, 0x98, 0x7B, 0xB0, 0xCD,
+		0xED, 0xBA, 0x42, 0x29, 0x73, 0xD3
+	};
+	static unsigned char dhg_2048[] = {
+		0x02
+	};
+	DH *dh = DH_new();
+	BIGNUM *p, *g;
 
-    if (dh == NULL)
-        return NULL;
-    p = BN_bin2bn(dhp_2048, sizeof(dhp_2048), NULL);
-    g = BN_bin2bn(dhg_2048, sizeof(dhg_2048), NULL);
-    if (p == NULL || g == NULL
-            || !DH_set0_pqg(dh, p, NULL, g)) {
-        DH_free(dh);
-        BN_free(p);
-        BN_free(g);
-        return NULL;
-    }
-    return dh;
+	if (dh == NULL)
+		return NULL;
+	p = BN_bin2bn(dhp_2048, sizeof(dhp_2048), NULL);
+	g = BN_bin2bn(dhg_2048, sizeof(dhg_2048), NULL);
+	if (p == NULL || g == NULL
+			|| !DH_set0_pqg(dh, p, NULL, g)) {
+		DH_free(dh);
+		BN_free(p);
+		BN_free(g);
+		return NULL;
+	}
+	return dh;
 }
 
 /**
@@ -127,14 +140,14 @@ int Client::send_message (const int socket, void* msg, const uint32_t msg_len)
 	
 	// Send message's length
 	ret = send(socket, &len, sizeof(len), 0);
-	if (ret < 0) {
+	if (ret <= 0) {
 		perror("Error while sending message's length");
 		return -1;
 	}
 	
 	// Send the message
 	ret = send(socket, msg, msg_len, 0);
-	if (ret < 0) {
+	if (ret <= 0) {
 		perror("Error while sending message");
 		return -1;
 	}
@@ -142,6 +155,17 @@ int Client::send_message (const int socket, void* msg, const uint32_t msg_len)
 	return 1;
 }
 
+/**
+ * Wait for a message, expected on the specified socket
+ * 
+ * @param socket socket descriptor
+ * @param msg the address of a pointer. 
+ * After a successful function invocation, such a pointer will point 
+ * to an allocated buffer containing the received message.
+ *            
+ * @return length of message on success, 0 if client closed the connection on the socket, 
+ * -1 if any error occurred
+ */
 long Client::receive_message (const int socket, void** msg)
 {
 	ssize_t ret;
@@ -182,13 +206,20 @@ long Client::receive_message (const int socket, void** msg)
 
 	return len;
 }
-//Run
+
+/**
+ * Starts client services
+ */
 void Client::run()
 {
 	int ret;
 
-    ret = negotiate();
-	if (ret < 0) return;
+	// Negotiate a symmetric key with the server
+	ret = negotiate();
+	if (ret < 0) {
+		cerr << "Error: negotiate failed";
+		return;
+	}
 
 	while (true) {
 		print_command_options();
@@ -410,7 +441,7 @@ int Client::negotiate_key_with_client (unsigned char*& clients_session_key, size
 
 
 		//get session key for clients comunications
-		clients_session_key_len = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
+		clients_session_key_len = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
 		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_len);
 		if (!clients_session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
@@ -657,7 +688,7 @@ int Client::receive_request_to_talk(unsigned char* session_key) {
 		}
 
 		//get session key for clients comunications
-		clients_session_key_lenght = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
+		clients_session_key_lenght = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
 		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_lenght);
 		if (!clients_session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
@@ -1027,7 +1058,7 @@ uint8_t Client::get_message_type(const unsigned char* msg)
 //negotiation of key and autentication with server
 int Client::negotiate() 
 {
-    int ret;
+	int ret;
 	X509* cert=nullptr;
 	X509* cert_CA=nullptr;
 	X509_CRL* crl_CA=nullptr;
@@ -1035,15 +1066,15 @@ int Client::negotiate()
 	long ser_certificate_len = 0;
 	unsigned char* iv = nullptr;
 	size_t iv_len = 0;
-    char* username_c = nullptr;
+	char* username_c = nullptr;
 	BIO* mbio = nullptr;
 	char* pubkey_buf = nullptr;
 	EVP_PKEY* public_key_from_cert = nullptr;
 	unsigned char* tag = nullptr;
-    EVP_PKEY* peer_key = nullptr;
+	EVP_PKEY* peer_key = nullptr;
 	unsigned char* ciphertext = nullptr;
 	size_t ciphertext_len = 0;
-    EVP_PKEY* my_dh_key;
+	EVP_PKEY* my_dh_key;
 
 	try {
 		// 1) Generate client's part of DH key, i.e. g**a
@@ -1056,16 +1087,16 @@ int Client::negotiate()
 		
 		// 2) Send username to server
 		// 2a) Allocate buffer for username
-		username_c = (char*)malloc(username1.length() + 1);
+		username_c = (char*)malloc(client_username.length() + 1);
 		if (!username_c) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error malloc username" << endl;
 			throw 1;
 		}
-    	strcpy(username_c, username1.c_str());
+		strcpy(username_c, client_username.c_str());
 
 		// 2b) Send to server
-    	ret = send_message(server_socket, (void*)username_c, username1.length() + 1);
+		ret = send_message(server_socket, (void*)username_c, client_username.length() + 1);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error send username" << endl;
@@ -1074,8 +1105,8 @@ int Client::negotiate()
 
 
 		// 3) Serialize my_dh_key
-    	mbio = BIO_new(BIO_s_mem()); // Allocate BIO
-    	if (!mbio) {
+		mbio = BIO_new(BIO_s_mem()); // Allocate BIO
+		if (!mbio) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error bio_new" << endl;
 			throw 2;
@@ -1114,7 +1145,7 @@ int Client::negotiate()
 		}
 
 		//derive session key
-		session_key_len = EVP_CIPHER_key_length(get_authentication_encryption_cipher());
+		session_key_len = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
 		session_key = derive_session_key(my_dh_key, peer_key, session_key_len);
 		if (!session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
@@ -1339,8 +1370,8 @@ EVP_PKEY* Client::generate_key_dh ()
 
 // get session key
 unsigned char* Client::derive_session_key (EVP_PKEY* my_dh_key, 
-                                                 EVP_PKEY* peer_key, 
-                                                 size_t key_len)
+												 EVP_PKEY* peer_key, 
+												 size_t key_len)
 {
 	int ret;
 
@@ -1472,9 +1503,9 @@ unsigned char* Client::derive_session_key (EVP_PKEY* my_dh_key,
 
 // receive public key from server
 int Client::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
-    int ret_int;
+	int ret_int;
 	long ret_long;
-    char* key = nullptr;
+	char* key = nullptr;
 	ret_long = receive_message(server_socket, (void**)&key);
 	if (ret_long <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] receive_from_server_pub_key: "
@@ -1511,23 +1542,17 @@ int Client::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
 		return -1;
 	}
 	free(key);
-    BIO_free(mem_bio);
-    return 1;
+	BIO_free(mem_bio);
+	return 1;
 }
-
-const EVP_CIPHER* Client::get_authentication_encryption_cipher ()
-{
-	return EVP_aes_128_gcm();
-}
-
 
 
 // Decrypt and verify  sign
 int Client::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len,
-                                          EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
-                                          unsigned char* shared_key, size_t shared_key_len, 
-                                          unsigned char* iv, size_t iv_len, unsigned char* tag,
-                                          EVP_PKEY* server_pubkey) 
+										  EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
+										  unsigned char* shared_key, size_t shared_key_len, 
+										  unsigned char* iv, size_t iv_len, unsigned char* tag,
+										  EVP_PKEY* server_pubkey) 
 {
 	int ret;
 	long ret_long;
@@ -1669,7 +1694,7 @@ int Client::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext
 
 //for verify server signature
 int Client::verify_server_signature (unsigned char* signature, size_t signature_len, 
-                                           unsigned char* cleartext, size_t cleartext_len, 
+										   unsigned char* cleartext, size_t cleartext_len, 
 										   EVP_PKEY* server_pubkey)
 {
 	EVP_MD_CTX* ctx = nullptr;
@@ -1994,7 +2019,7 @@ unsigned char* Client::sign_message(unsigned char* msg, size_t msg_len, unsigned
 //get private key
 EVP_PKEY* Client::get_client_private_key ()
 {
-	string filename_prvkey = keys_folder + username1 + keys_extension;
+	string filename_prvkey = keys_folder + client_username + keys_extension;
 
 	// Load my private key:
 	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
@@ -2004,7 +2029,7 @@ EVP_PKEY* Client::get_client_private_key ()
 		return nullptr;
 	}
 
-	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, (void*)password.c_str());
+	EVP_PKEY* prvkey = PEM_read_PrivateKey(prvkey_file, NULL, NULL, (void*)client_password.c_str());
 	fclose(prvkey_file);
 	if(!prvkey) { 
 		cerr << "[Thread " << this_thread::get_id() << "] get_client_private_key: "
@@ -2024,7 +2049,7 @@ EVP_PKEY* Client::get_client_private_key ()
 X509_CRL* Client::get_crl() 
 {
 	// Open the file which contains the CRL
-	FILE* file = fopen(filename_crl.c_str(), "r");
+	FILE* file = fopen(Client::filename_crl.c_str(), "r");
 	if (!file) {
 		cerr << "[Thread " << this_thread::get_id() << "] get_crl: "
 		<< "cannot open file " << filename_crl << endl;
@@ -2169,11 +2194,11 @@ int Client::build_store_certificate_and_validate_check(X509* CA_cert, X509_CRL* 
  * @return 1 on success, -1 on failure 
  */
 int Client::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
-                               unsigned char* aad, int aad_len,
-                               unsigned char* tag,
-                               unsigned char* key,
-                               unsigned char* iv, int iv_len,
-                               unsigned char*& plaintext, size_t& plaintext_len)
+							   unsigned char* aad, int aad_len,
+							   unsigned char* tag,
+							   unsigned char* key,
+							   unsigned char* iv, int iv_len,
+							   unsigned char*& plaintext, size_t& plaintext_len)
 {
 	int ret;
 
