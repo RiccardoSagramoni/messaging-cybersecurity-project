@@ -75,6 +75,9 @@ void ServerThread::run ()
 				execute_exit();
 				return;
 			}
+			else if (ret == 0) { // executed exit
+				return;
+			}
 		}
 
 	} catch (...) { // Handle unpredictable failure
@@ -1713,7 +1716,7 @@ int ServerThread::get_new_client_command (unsigned char*& msg, size_t& msg_len)
  * Parse received message from client and execute its request
  * 
  * @param msg received message
- * @return 1 on success, -1 on failure
+ * @return 1 on success, 0 if the server executed the exit, -1 on failure
  */
 int ServerThread::execute_client_command (const unsigned char* msg, const size_t msg_len) 
 {
@@ -1729,6 +1732,7 @@ int ServerThread::execute_client_command (const unsigned char* msg, const size_t
 	}
 	else if (request_type == TYPE_EXIT) {
 		ret = execute_exit();
+		return (ret != 1) ? -1 : 0;
 	}
 	else if (request_type == ACCEPT_TALK || request_type == REFUSE_TALK) {
 		ret = execute_accept_talk(msg, msg_len, (request_type == ACCEPT_TALK));

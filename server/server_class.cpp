@@ -82,8 +82,14 @@ bool Server::add_new_client (string username, const int socket,
 	// (automatically unlock at the end of its scope)
 	lock_guard<shared_timed_mutex> lock(connected_client_mutex);
 
+	unsigned char* key_copy = (unsigned char*)malloc(key_len);
+	if (!key_copy) {
+		return false;
+	}
+	memcpy(key_copy, key, key_len);
+
 	// Prepare data structure related to the client
-	connection_data* data = new connection_data(socket, key, key_len);
+	connection_data* data = new connection_data(socket, key_copy, key_len);
 
 	// Add user to the list of connected client
 	auto ret = connected_client.insert({username, data});
@@ -217,7 +223,7 @@ int Server::remove_client (const string& username)
 	}
 
 	// Remove key
-	#pragma optimize("", off) // TODO
+	#pragma optimize("", off)
 		memset((void*) client_data->key, 0, client_data->key_len);
 	#pragma optimize("", on)
 	free((void*) client_data->key);
