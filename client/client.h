@@ -107,9 +107,7 @@ class Client {
 	int negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len);
 
 	// }
-
-
-	static bool does_username_exist(const string& username);
+	
 	
 public:
 	Client(const uint16_t _port, const string _name, const string _password);
@@ -122,6 +120,8 @@ public:
 	void exit();
 
 	// }
+
+	static bool does_username_exist(const string& username);
 };
 
 

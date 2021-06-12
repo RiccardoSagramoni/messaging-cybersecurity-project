@@ -25,8 +25,6 @@ void ServerThread::run ()
 	int ret;
 
 	// 1) Authenticate client and negotiate session key
-	cout << "START" << endl; // TODO remove
-
 	client_key  = authenticate_and_negotiate_key(client_username, client_key_len);
 	if(!client_key) {
 		cerr << "[Thread " << this_thread::get_id() << "] run: "
@@ -38,7 +36,7 @@ void ServerThread::run ()
 		return;
 	}	
 	
-	cout << "STOP" << endl;	
+	cout << "[Thread " << this_thread::get_id() << "]: user " << client_username << " has entered the server" << endl;	
 
 	// 2) Add current client to server
 	if (!server->add_new_client(client_username, client_socket, client_key, client_key_len)) {
@@ -525,7 +523,7 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
  * @return 1 on success, -1 if client is not present on the server 
  */
 int ServerThread::execute_exit ()
-{
+{	
 	if (client_key != nullptr) {
 		secure_free(client_key, client_key_len);
 		client_key = nullptr;

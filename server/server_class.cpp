@@ -231,6 +231,9 @@ int Server::remove_client (const string& username)
 	// Remove client data
 	connected_client.erase(username);
 
+	cout << "[Thread " << this_thread::get_id() << "]: "
+	<< "user " << username << " exits" << endl;
+
 	return 1;
 }
 
