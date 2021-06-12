@@ -1,33 +1,4 @@
 #include "client.h"
-#define LENGTH 2048
-
-void thread_main (Client* client, const int socket, const sockaddr_in addr) 
-{
-	ClientThread st(client, socket, addr);
-	st.run();
-}
-
-void send_thread (Client* client, const int socket, const sockaddr_in addr) 
-{
-	ClientThread st(client, socket, addr);
-    while (true) {
-        // TODO st.send_message(...);
-    }
-	
-}
-
-void receive_thread (Client* client, const int socket, const sockaddr_in addr) 
-{
-	ClientThread st(client, socket, addr);
-    while (true) {
-       // TODO st.receive_message(...);
-    }
-	
-}
-
-
-
-
 
 int main(int argc, char** argv) 
 {
@@ -67,16 +38,12 @@ int main(int argc, char** argv)
         perror("configure_listener_socket() failed");
 		exit(EXIT_FAILURE);
     }
-    if (!client.connects()) {
-        perror("connects() failed");
+    if (!client.connect_to_server()) {
+        perror("connect_to_server() failed");
 		exit(EXIT_FAILURE);
     }
 
     cout << "=== WELCOME TO THE CHATROOM ===" << endl;
 
-    /*thread t(send_thread, &client, client.get_sock(), client.get_server_addr());
-    thread tt(receive_thread, &client, client.get_sock(), client.get_server_addr());*/
-    thread t(thread_main, &client, client.get_sock(), client.get_server_addr());
-    t.join(); // TODO remove
-    //client.exit();
+    client.run();
 }

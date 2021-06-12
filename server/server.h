@@ -108,8 +108,8 @@ public:
 
 
 class ServerThread {
-	const string filename_prvkey = "privkey.pem";
-	const string filename_certificate = "certificate.pem";
+	static const string filename_prvkey;
+	static const string filename_certificate;
 	
 	Server* server;
 	
@@ -120,7 +120,7 @@ class ServerThread {
 	unsigned char* client_key = nullptr;
 	size_t client_key_len = 0;
 
-	// Base methods for networking {
+	// Fundamental methods for networking {
 
 	static int send_message (const int socket, void* msg, const uint32_t msg_len);
 	static long receive_message (const int socket, void** msg);
@@ -136,8 +136,8 @@ class ServerThread {
 	static EVP_PKEY* generate_key_dh ();
 	static unsigned char* derive_session_key (EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
 	
-	EVP_PKEY* get_server_private_key ();
-	X509* get_server_certificate ();
+	static EVP_PKEY* get_server_private_key ();
+	static X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
 
 	static int gcm_encrypt (const unsigned char* plaintext, const int plaintext_len,
@@ -179,6 +179,10 @@ class ServerThread {
 	uint8_t get_request_type (const unsigned char* msg);
 	bool check_username_validity(const string& username);
 
+	// }
+
+	// Talk {
+
 	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key);
 	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
 	int send_notification_for_accepted_talk_request();
@@ -202,10 +206,6 @@ class ServerThread {
 	
 	// }
 
-	void a (atomic_int* return_value) {
-		return;
-	}
-
 public:
 	ServerThread(Server* _server, const int socket, const sockaddr_in addr);
 	
@@ -219,6 +219,7 @@ public:
 ////////////////////////////////////////////////////////
 
 // Type of client messages (1 byte) {
+	
 	#define		TYPE_SHOW		0x00
 	#define		TYPE_TALK		0x01
 	#define		TYPE_EXIT		0x02
@@ -228,21 +229,29 @@ public:
 	#define 	END_TALK		0x05
 
 	#define 	CLIENT_ERROR	0xFF
+
 // }
 
+
 // Type of server messages (1 byte) {
+
 	#define		SERVER_OK				0x00
 	#define		SERVER_ERR				0xFF
 
 	#define 	SERVER_REQUEST_TO_TALK	0x01
 	#define 	SERVER_END_TALK			0X02
+
 // }
 
+
 // Type of errors (1 byte) {
+
 	#define		ERR_ALREADY_LOGGED		0x01
 	#define		ERR_WRONG_TYPE			0x02
 
 	#define 	ERR_GENERIC				0xFF
+
 // }
+
 
 #define TAG_SIZE 16
