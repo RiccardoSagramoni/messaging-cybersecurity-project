@@ -45,18 +45,17 @@ public:
 
     string get_username ();
     string get_password();
+
+    static bool does_username_exist(const string& username);
 };
 
 class ClientThread {
 	Client* client;
 	int main_server_socket;
 	sockaddr_in main_server_address;
-	/*const string filename_prvkey = "rsa_privkey.pem";
-    const string filename_CA_certificate = "FoundationsOfCybersecurity_cert.pem";
-    const string filename_crl = "FoundationsOfCybersecurity_crl.pem";*/
-    const string filename_prvkey = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/rsa_privkey.pem";
-    const string filename_CA_certificate = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/FoundationsOfCybersecurity_cert.pem";
-    const string filename_crl = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/FoundationsOfCybersecurity_crl.pem";
+	const string keys_folder = "keys/";
+    const string filename_CA_certificate = keys_folder + "FoundationsOfCybersecurity_cert.pem";
+    const string filename_crl = keys_folder + "FoundationsOfCybersecurity_crl.pem";
 
 
 public:

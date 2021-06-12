@@ -49,8 +49,12 @@ int main(int argc, char** argv)
     cout << "Please enter your name: ";
     cin >> username;
     if (username.length() > 32 || username.length() < 2) {
-		cout << "Name must be less than 30 and more than 2 characters.";
+		cerr << "Name must be less than 30 and more than 2 characters.";
 	}
+
+    if(!Client::does_username_exist(username)) {
+        cerr << "Username " << username << " doesn't exist" << endl;
+    }
 
     // Ask user the password for client's private key
     string password;

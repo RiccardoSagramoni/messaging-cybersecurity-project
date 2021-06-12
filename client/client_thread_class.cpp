@@ -1923,6 +1923,8 @@ EVP_PKEY* ClientThread::get_client_private_key ()
 	}
 	strcpy(password, client->get_password().c_str());
 	
+	string filename_prvkey = keys_folder + client->get_username() + "_privkey.pem";
+
 	// Load my private key:
 	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
 	if (!prvkey_file) {
