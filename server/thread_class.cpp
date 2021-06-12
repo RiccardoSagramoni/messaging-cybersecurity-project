@@ -433,6 +433,7 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		}
 		return -1;
 	}
+
 	free(ciphertext);
 	free(tag);
 	free(iv);
@@ -484,12 +485,14 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		if (ret_long <= 0) {
 			throw 2;
 		}
+
 		// 4) Decrypt message
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, key, 
 		                      iv, iv_len, msg, msg_len);
 		if (ret < 0) {
 			throw 3;
 		}
+	
 	} catch (int e) {
 		if (e >= 3) {
 			free(tag);
@@ -907,7 +910,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 	size_t peer_key_len = 0;
 	unsigned char* concat_keys = nullptr;
 	size_t concat_keys_len = 0;
-	size_t iv_len = 0;
 
 	try {
 		// 1) Receive message from client
@@ -918,7 +920,7 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 			<< "receive_message iv failed" << endl;
 			throw 0;
 		}
-		iv_len = ret;
+		size_t iv_len = ret;
 
 		// 1b) encrypted_k{sign_by_client{g**a,g**b}}
 		ret = receive_message(client_socket, (void**)&ciphertext);
@@ -1028,7 +1030,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		}
 		if (e >= 1) {
 			free(iv);
-			secure_free(iv, iv_len);
 		}
 		return -1;
 	}
@@ -1673,7 +1674,6 @@ EVP_PKEY* ServerThread::get_client_public_key (const string& username)
 
 
 
-
 /**
  * Receive a new message from the client
  * 
@@ -1718,6 +1718,7 @@ int ServerThread::get_new_client_command (unsigned char*& msg, size_t& msg_len)
 int ServerThread::execute_client_command (const unsigned char* msg, const size_t msg_len) 
 {
 	uint8_t request_type = get_request_type(msg);
+	
 	int ret = 0;
 
 	if (request_type == TYPE_SHOW) {
@@ -1769,13 +1770,15 @@ int ServerThread::execute_show ()
 	// 2a) Calculate necessary space
 	size_t message_len = 1;
 	for (auto s : l) {
-		message_len += sizeof(uint32_t) + s.length() + 1;
+		message_len += (sizeof(uint32_t) + s.length() + 1);
 	}
+
 	// 2b) Allocate message
 	char* message = (char*)malloc(message_len);
 	if (!message) {
 		return -1;
 	}
+
 	// 2c) Initialise message
 	uint8_t* type = (uint8_t*)&message[0];
 	*type = SERVER_OK;
@@ -1783,21 +1786,22 @@ int ServerThread::execute_show ()
 
 	for (auto s: l) {
 		// a) Insert username length
-		uint32_t string_size = strlen(s.c_str()) + 1;
+		uint32_t string_size = s.length() + 1;
 		string_size = htonl(string_size);
-		memcpy(message + 1, &string_size, sizeof(string_size));
+		memcpy(message + pos, &string_size, sizeof(string_size));
 		pos += sizeof(string_size);
+
 		// b) Insert username
-		memcpy(message + 5, s.c_str(), s.length() + 1);
 		memcpy(message + pos, s.c_str(), s.length() + 1);
 		pos += s.length() + 1;
 	}
-	//message[message_len - 1] = '\0';
+
 	// 3) Get lock on socket output stream
 	if (!server->handle_socket_lock(client_username, true, false)) {
 		free(message);
 		return -1;
 	}
+
 	// 4) Send message
 	int ret = send_plaintext(client_socket, (unsigned char*)message, message_len, client_key);
 	free(message);
@@ -1810,6 +1814,7 @@ int ServerThread::execute_show ()
 	if (!server->handle_socket_lock(client_username, false, false)) {
 		return -1;
 	}
+
 	return 1;
 }
 
@@ -1822,6 +1827,8 @@ int ServerThread::execute_show ()
 int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 {
 	int ret;
+	int return_value = 0; // 0 if error is recoverable, -1 otherwise
+
 	string peer_username;
 	unsigned char* peer_key;
 	size_t peer_key_len;
@@ -2069,9 +2076,153 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 	return 1;
 }
 
+/**
+ * // TODO
+ * @param peer_username 
+ * @param peer_socket 
+ * @param peer_key 
+ * @return 1 on success, 0 if client_socket has been closed, -1 on failure 
+ */
+int ServerThread::talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key)
+{
+	atomic<int> return_value_child(1);
+	atomic<int> return_value_father(1);
 
+	// Create new thread for communication B->A
+	thread child(&ServerThread::talk, this, peer_socket, peer_key, client_socket, client_key, &return_value_child);
+	//thread child(&ServerThread::a, this, &return_value_child);
 
+	talk(client_socket, client_key, peer_socket, peer_key, &return_value_father);
 
-int ServerThread::talk_between_clients (const int peer_socket, const unsigned char* peer_key) {
+	child.join();
+
+	// Pass the return value to the main thread of second client
+	server->set_talk_exit_status(peer_username, return_value_child.load());
+	server->notify_end_talk(peer_username);
+
+	return return_value_father.load();
+}
+
+/**
+ * Execute the protocol for talking between clients.
+ * This function handle only one direction of the message flow.
+ * 
+ * @param src_socket id of the socket by which this function receives messages 
+ * @param src_key key used by source client
+ * @param dest_socket id of the socket by which this function sends messages
+ * @param dest_key key used by destination client
+ * @param return_value it will contain 1 if the talk has ended correctly, 
+ * 0 if a socket has been closed, -1 if any other error occurs
+ */
+void ServerThread::talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, atomic<int>* return_value)
+{
+	int ret;
+	unsigned char* msg;
+	size_t msg_len;
+	
+	while (true) {
+		// 1) Receive from source
+		ret = receive_plaintext(src_socket, msg, msg_len, src_key);
+		if (ret != 1) {
+			// Shutdown the faulty connection
+			shutdown(src_socket, SHUT_RDWR);
+
+			// Send closing message to dest
+			unsigned char closing_msg[1]= {SERVER_END_TALK};
+			send_plaintext(dest_socket, closing_msg, 1, dest_key);
+
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "receive_plaintext from source failed" << endl;
+
+			return_value->store(ret);
+			return;
+		}
+
+		// 3) Check type of message
+		uint8_t* type_ptr = (uint8_t*)msg;
+		if (*type_ptr != TALKING) {
+			free(msg);
+
+			// Send closing message to dest
+			unsigned char closing_msg[1]= {SERVER_END_TALK};
+			send_plaintext(dest_socket, closing_msg, 1, dest_key);
+
+			if (*type_ptr == END_TALK) {
+				return_value->store(1);
+				cerr << "[Thread " << this_thread::get_id() << "] talk: "
+				<< "closing talk (1)" << endl;
+			}
+			else {
+				return_value->store(-1);
+				cerr << "[Thread " << this_thread::get_id() << "] talk: "
+				<< "received wrong message type" << endl;
+			}
+			
+			return;
+		}
+
+		*type_ptr = SERVER_OK;
+
+		// 4) Send to destination
+		ret = send_plaintext(dest_socket, msg, msg_len, dest_key);
+		free(msg);
+		if (ret != 1) {
+			// Shutdown the faulty connection
+			shutdown(dest_socket, SHUT_RDWR);
+
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "send plaintext to destination failed" << endl;
+
+			return_value->store(ret);
+			return;
+		}
+	}
+}
+/*
+A->S1 chiudi
+S1->B chiudi
+S1 set closing state
+B->S2 chiudi
+*/
+
+/**
+ * // TODO
+ * @param msg 
+ * @param msg_len 
+ * @param accept 
+ * @return 1 on success, -1 failure 
+ */
+int ServerThread::execute_accept_talk (const unsigned char* msg, const size_t msg_len, const bool accept)
+{
+	string username = "";
+	
+	if (accept) {
+		if (msg_len <= 1 + sizeof(uint32_t)) {
+			return -1;
+		}
+
+		uint32_t len;
+		memcpy(&len, msg + 1, sizeof(len));
+		len = ntohl(len);
+
+		if (msg_len < 1 + sizeof(len) + len) {
+			return -1;
+		}
+
+		username = (char*)(msg + 1 + sizeof(len));
+	}
+
+	int ret = server->notify_start_talk(client_username, username, accept);
+	if (ret < 0) {
+		return -1;
+	}
+
+	if (accept) {
+		ret = server->wait_end_talk(client_username);
+		if (ret < 0) {
+			return -1;
+		}
+	}
+
 	return 1;
 }
