@@ -19,6 +19,7 @@
 #include <list>
 #include <iomanip>
 #include <condition_variable>
+#include <queue>
 
 using namespace std;
 
@@ -31,13 +32,13 @@ class thread_bridge {
 
 	mutex mx_request_talk;
 	condition_variable cv_request_talk;
-	bool has_received_request_to_talk = false;
+	queue<string> request_queue;
 
 public:
 	unsigned char* wait_for_new_message (size_t& msg_len);
-	void insert_new_message(unsigned char* msg, size_t msg_len);
-	bool check_request_talk();
-	int notify_request_talk();
+	void notify_new_message(unsigned char* msg, size_t msg_len);
+	int check_request_talk(string& peer_username);
+	void add_request_talk(const string& peer_username);
 };
 
 class Client {

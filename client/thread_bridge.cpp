@@ -1,5 +1,12 @@
 #include "client.h"
 
+/**
+ * Wait for a new message from a server
+ * 
+ * @param msg_len the length of the message (on success)
+ * 
+ * @return the received message on success, NULL on failure 
+ */
 unsigned char* thread_bridge::wait_for_new_message (size_t& msg_len)
 {
 	unique_lock<mutex> lock(mx_new_msg);
@@ -17,7 +24,13 @@ unsigned char* thread_bridge::wait_for_new_message (size_t& msg_len)
 	return msg;
 }
 
-void thread_bridge::insert_new_message(unsigned char* msg, size_t msg_len)
+/**
+ * Notify a new message received from the server
+ *  
+ * @param msg pointer to the message
+ * @param msg_len message length
+ */
+void thread_bridge::notify_new_message(unsigned char* msg, size_t msg_len)
 {
 	unique_lock<mutex> lock(mx_new_msg);
 	while (is_msg_ready) {
@@ -30,7 +43,32 @@ void thread_bridge::insert_new_message(unsigned char* msg, size_t msg_len)
 	cv_new_msg.notify_all();
 }
 
-bool thread_bridge::check_request_talk ()
+/**
+ * Check if the client has received a request to talk from the server.
+ * 
+ * @param peer_username on success, it will contain the name of the user who sent the request.
+ * 
+ * @return the number of the other pending request to talk after removing the one sent by "peer_username", -1 if there are no requests at all
+ */
+int thread_bridge::check_request_talk (string& peer_username)
 {
-	// TODO
+	unique_lock<mutex> lock(mx_request_talk);
+	if (request_queue.size() == 0) {
+		return -1;
+	}
+
+	peer_username = request_queue.front();
+	request_queue.pop();
+	return request_queue.size();
+}
+
+/**
+ * Add a new received request to talk.
+ * 
+ * @param peer_username name of the user who sent the request
+ */
+void thread_bridge::add_request_talk(const string& peer_username)
+{
+	unique_lock<mutex> lock(mx_request_talk);
+	request_queue.push(peer_username);
 }
