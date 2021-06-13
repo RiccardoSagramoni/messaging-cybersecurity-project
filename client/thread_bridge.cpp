@@ -66,9 +66,24 @@ int thread_bridge::check_request_talk (string& peer_username)
  * Add a new received request to talk.
  * 
  * @param peer_username name of the user who sent the request
+ * 
+ * @return 1 on success, -1 if the client is already talking
  */
-void thread_bridge::add_request_talk(const string& peer_username)
+int thread_bridge::add_request_talk(const string& peer_username)
 {
-	unique_lock<mutex> lock(mx_request_talk);
+	unique_lock<mutex> lock1(mx_talk_status); 
+	if (is_talking) { // TODO necessario?
+		return -1;
+	}
+	lock1.unlock();
+	
+	unique_lock<mutex> lock2(mx_request_talk);
 	request_queue.push(peer_username);
+	return 1;
+}
+
+void thread_bridge::modify_talking_status (const bool new_status) // TODO necessario?
+{
+	unique_lock<mutex> lock(mx_talk_status);
+	is_talking = new_status;
 }

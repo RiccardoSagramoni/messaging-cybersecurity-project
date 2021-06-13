@@ -35,11 +35,15 @@ class thread_bridge {
 	condition_variable cv_request_talk;
 	queue<string> request_queue;
 
+	mutex mx_talk_status;
+	bool is_talking = false;
+
 public:
 	unsigned char* wait_for_new_message (size_t& msg_len);
 	void notify_new_message(unsigned char* msg, size_t msg_len);
 	int check_request_talk(string& peer_username);
-	void add_request_talk(const string& peer_username);
+	int add_request_talk(const string& peer_username);
+	void modify_talking_status (const bool new_status);
 };
 
 class Client {

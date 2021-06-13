@@ -333,9 +333,11 @@ int Server::prepare_for_talking (const string& username, unsigned char*& key, si
 }
 
 /**
- * // TODO
- * @param wanted_user 
- * @param asking_user 
+ * Block the thread and wait until the client don't answer to your talk request
+ * 
+ * @param wanted_user user that this thread wants to talk to
+ * @param asking_user user that sent the request to talk
+ * 
  * @return 1 on success, -1 on failure 
  */
 int Server::wait_start_talk (const string& wanted_user, const string& asking_user)
@@ -376,9 +378,12 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 }
 
 /**
- * // TODO 
- * @param user 
- * @return int 
+ * Stop the thread and wait until the talk isn't ended.
+ * Called by the thread that serves the client who received the request to talk
+ * 
+ * @param user name of the client that this thread serves
+ * 
+ * @return 1 on success, -1 on failure
  */
 int Server::wait_end_talk (const string& user)
 {
@@ -413,10 +418,13 @@ int Server::wait_end_talk (const string& user)
 }
 
 /**
- * // TODO 
- * @param wanted_user 
+ * Notify to the waiting threads that the client has answered to onw request to talk
+ * 
+ * @param wanted_user // TODO
  * @param asking_user 
- * @return int 
+ * @param is_accepting true if the client has accepted a request to talk, false otherwise
+ * 
+ * @return 1 on success, -1 on failure 
  */
 int Server::notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting)
 {

@@ -2116,6 +2116,7 @@ int ServerThread::talk_between_clients (const string& peer_username, const int p
  * @param src_key key used by source client
  * @param dest_socket id of the socket by which this function sends messages
  * @param dest_key key used by destination client
+ * 
  * @param return_value it will contain 1 if the talk has ended correctly, 
  * 0 if a socket has been closed, -1 if any other error occurs
  */
