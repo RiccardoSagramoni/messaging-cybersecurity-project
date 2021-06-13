@@ -1,27 +1,28 @@
-#include <openssl/rand.h>
-#include <arpa/inet.h>
-#include <cerrno>
+#include <arpa/inet.h> // for htons, ntohs...
+#include <cerrno> // for errno
+#include <condition_variable>
+#include <cstring> // for memset
+#include <cstdio> // for file access and error-handling functions
 #include <cstring>
-#include <cstdio>
 #include <iostream>
 #include <limits>
 #include <mutex>
-#include <netinet/in.h>
+#include <netinet/in.h> // for struct sockaddr_in
+#include <openssl/bio.h>
+#include <openssl/dh.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/rand.h>
+#include <openssl/x509.h>
+#include <queue>
 #include <string>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
-#include <openssl/dh.h>
-#include <openssl/rand.h>
-#include <openssl/err.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
-#include <list>
-#include <iomanip>
-#include <condition_variable>
-#include <queue>
 
 using namespace std;
+
 
 class thread_bridge {
 	mutex mx_new_msg;

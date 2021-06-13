@@ -3,14 +3,17 @@ CFLAGS = -c -Wall -g -std=c++14 -Wno-unknown-pragmas
 
 all: client.exe
 
-client.exe: client.o client_class.o
-	g++ $(LFLAGS) client.o client_class.o -o client.exe
+client.exe: client.o client_class.o thread_bridge.o
+	g++ $(LFLAGS) client.o client_class.o thread_bridge.o -o client.exe
 
 client.o: client.cpp
 	g++ $(CFLAGS) client.cpp
 
 client_thread_class.o: client_thread_class.cpp
 	g++ $(CFLAGS) client_thread_class.cpp
+	
+thread_bridge.o: thread_bridge.cpp
+	g++ $(CFLAGS) thread_bridge.cpp
 
 clean:
 	rm *.o client.exe
