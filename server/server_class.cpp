@@ -500,9 +500,12 @@ int Server::notify_end_talk (const string& user)
 }
 
 /**
- * // TODO
- * @param username 
- * @param status 
+ * Set the exit status from a talk, so that the thread which serves the client
+ * will be able to handle possible errors when it wakes up.
+ * 
+ * @param username name of the user
+ * @param status exit status
+ * 
  * @return 1 on success, -1 on failure 
  */
 int Server::set_talk_exit_status(const string& username, const int status)

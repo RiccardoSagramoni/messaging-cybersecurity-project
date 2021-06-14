@@ -48,42 +48,30 @@ void thread_bridge::notify_new_message(unsigned char* msg, size_t msg_len)
  * 
  * @param peer_username on success, it will contain the name of the user who sent the request.
  * 
- * @return the number of the other pending request to talk after removing the one sent by "peer_username", -1 if there are no requests at all
+ * @return 1 if there is a new request, -1 if there are no requests at all
  */
 int thread_bridge::check_request_talk (string& peer_username)
 {
 	unique_lock<mutex> lock(mx_request_talk);
-	if (request_queue.size() == 0) {
+	if (!has_received_request) {
 		return -1;
 	}
 
-	peer_username = request_queue.front();
-	request_queue.pop();
-	return request_queue.size();
+	peer_username = request_username;
+	request_username = "";
+	has_received_request = false;
+
+	return 1;
 }
 
 /**
  * Add a new received request to talk.
  * 
  * @param peer_username name of the user who sent the request
- * 
- * @return 1 on success, -1 if the client is already talking
  */
-int thread_bridge::add_request_talk(const string& peer_username)
+void thread_bridge::add_request_talk(const string& peer_username)
 {
-	unique_lock<mutex> lock1(mx_talk_status); 
-	if (is_talking) { // TODO necessario?
-		return -1;
-	}
-	lock1.unlock();
-	
-	unique_lock<mutex> lock2(mx_request_talk);
-	request_queue.push(peer_username);
-	return 1;
-}
-
-void thread_bridge::modify_talking_status (const bool new_status) // TODO necessario?
-{
-	unique_lock<mutex> lock(mx_talk_status);
-	is_talking = new_status;
+	unique_lock<mutex> lock(mx_request_talk);
+	has_received_request = true;
+	request_username = peer_username;
 }

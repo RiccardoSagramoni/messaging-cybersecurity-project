@@ -264,6 +264,11 @@ void Client::run()
 		else {
 			break;
 		}
+
+		// check request to talk
+		// if yes, stampa la richiesta a schermo
+		// aspetta yes/no da utente
+		// if yes, inizia protocollo
 	}
 }
 

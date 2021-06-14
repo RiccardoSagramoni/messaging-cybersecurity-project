@@ -1824,7 +1824,7 @@ int ServerThread::execute_show ()
 }
 
 /**
- * // TODO
+ * Starts a talk between two clients. 
  * @param msg 
  * @param msg_len 
  * @return int 
@@ -2095,7 +2095,6 @@ int ServerThread::talk_between_clients (const string& peer_username, const int p
 
 	// Create new thread for communication B->A
 	thread child(&ServerThread::talk, this, peer_socket, peer_key, client_socket, client_key, &return_value_child);
-	//thread child(&ServerThread::a, this, &return_value_child);
 
 	talk(client_socket, client_key, peer_socket, peer_key, &return_value_father);
 

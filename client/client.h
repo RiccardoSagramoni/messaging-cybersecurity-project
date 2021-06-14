@@ -33,18 +33,18 @@ class thread_bridge {
 
 	mutex mx_request_talk;
 	condition_variable cv_request_talk;
-	queue<string> request_queue;
-
-	mutex mx_talk_status;
-	bool is_talking = false;
+	bool has_received_request = false;
+	string request_username = "";
 
 public:
 	unsigned char* wait_for_new_message (size_t& msg_len);
 	void notify_new_message(unsigned char* msg, size_t msg_len);
 	int check_request_talk(string& peer_username);
-	int add_request_talk(const string& peer_username);
-	void modify_talking_status (const bool new_status);
+	void add_request_talk(const string& peer_username);
 };
+
+//thread child(&ServerThread::a, this, &return_value_child); // TODO remove
+
 
 class Client {
 	// Connection data {
@@ -104,6 +104,7 @@ class Client {
 
 
 	// STS protocol (authentication and key establishment) {
+
 	int negotiate();
 	
 	int receive_from_server_pub_key(EVP_PKEY*& peer_key);
