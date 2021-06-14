@@ -2613,6 +2613,11 @@ void Client::input_slave_thread ()
 			return;
 		}
 
+
+		uint8_t message_type = get_message_type(msg);
+		if (message_type == SERVER_REQUEST_TO_TALK) {
+			//TODO
+		}
 		// 2) Check message? Is it a request
 		// 2a) yes // TODO
 
