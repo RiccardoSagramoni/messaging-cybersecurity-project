@@ -122,21 +122,27 @@ class Client {
 	int receive_response_command_to_server();
 	void print_command_options();
 	int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
-	int show(unsigned char* shared_key);
+	int show(thread_bridge* bridge);
 	uint8_t get_message_type(const unsigned char* msg);
 	
-	int exit_by_application(unsigned char* shared_key);
+	int exit_by_application();
 	int receive_request_to_talk(unsigned char* session_key);
 	int send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key);
 	int receive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
 	int negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	void run(thread_bridge* bridge);
+
+
+
+	int receive_plaintext2 (const int socket, thread_bridge* bridge, unsigned char* shared_key);
 
 	// }
 	
 	
 public:
 	Client(const uint16_t _port, const string _name, const string _password);
-	void run();
+	
+	void exec();
 
 	// Connection with the server {
 	

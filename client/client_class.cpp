@@ -7,7 +7,7 @@ Client::Client(const uint16_t _port, const string _username, const string _passw
 }
 
 // Initialize static public strings
-const string Client::keys_folder = "keys/";
+const string Client::keys_folder = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/keys/";
 const string Client::keys_extension = "_privkey.pem";
 const string Client::filename_CA_certificate = Client::keys_folder + 
 											   "FoundationsOfCybersecurity_cert.pem";
@@ -207,20 +207,41 @@ long Client::receive_message (const int socket, void** msg)
 	return len;
 }
 
-/**
- * Starts client services
- */
-void Client::run()
-{
-	int ret;
 
+
+
+
+
+void Client::exec() {
+	int ret;
+	thread_bridge* bridge;
 	// Negotiate a symmetric key with the server
 	ret = negotiate();
 	if (ret < 0) {
 		cerr << "Error: negotiate failed";
 		return;
 	}
+	thread t1(&Client::receive_plaintext2, this, server_socket, bridge, session_key);
+	thread t2(&Client::run, this, bridge);
+	t1.join();
+	t2.join();
+}
 
+
+
+
+
+
+
+
+
+
+/**
+ * Starts client services
+ */
+void Client::run(thread_bridge* bridge)
+{
+	int ret;
 	while (true) {
 		print_command_options();
 
@@ -241,7 +262,7 @@ void Client::run()
 			}
 		}
 		else if (command == "1") {
-			ret = show(session_key);
+			ret = show(bridge);
 			if (ret < 0) {
 				cout<<"error show()"<<endl;
 				break;
@@ -252,7 +273,7 @@ void Client::run()
 			}
 		}
 		else if (command == "2") {
-			ret = exit_by_application(session_key);
+			ret = exit_by_application();
 			if (ret != 1) {
 				cout<<"error exit_by_application()"<<endl;
 				break;
@@ -960,44 +981,45 @@ int Client::send_command_to_server(unsigned char* msg, unsigned char* shared_key
  * 
  * @return 1 on success, -1 on failure
  */
-int Client::show (unsigned char* shared_key) 
+int Client::show(thread_bridge* bridge) 
 {
-	unsigned char* msg_received = nullptr;
-	size_t msg_received_len = 0;
+	unsigned char* msg_received_view = nullptr;
+	size_t msg_received_view_len = 0;
 
 	// Prepare request for show 
 	char message[1] = {TYPE_SHOW};
 
 	// Send message to server
-	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, shared_key);
+	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, session_key);
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "error send message to server" << endl;
 		return -1;
 	}
-
+/*
 	// Receive response from the server
-	ret = receive_plaintext(server_socket, msg_received, msg_received_len, shared_key);
+	ret = receive_plaintext(server_socket, msg_received_view, msg_received_view_len, session_key);
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "error receive response" << endl;
 		return -1;
 	}
-
+*/
+	msg_received_view = bridge->wait_for_new_message(msg_received_view_len);
 	// Check if the header the the response is correct
-	uint8_t message_type = get_message_type(msg_received);
+	uint8_t message_type = get_message_type(msg_received_view);
 	if (message_type != SERVER_OK) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "wrong received message type" << endl;
-		free(msg_received);
+		free(msg_received_view);
 		return -1;
 	}
 
 	// Check if received message is a null terminated string
-	if (msg_received[msg_received_len - 1] != '\0') {
+	if (msg_received_view[msg_received_view_len - 1] != '\0') {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "wrong received message format" << endl;
-		free(msg_received);
+		free(msg_received_view);
 		return -1;
 	}
 
@@ -1005,27 +1027,27 @@ int Client::show (unsigned char* shared_key)
 
 	// Print the username list
 	size_t i = 1;
-	while (i < msg_received_len) {
+	while (i < msg_received_view_len) {
 		// Extract length of username
 		uint32_t username_len;
-		memcpy(&username_len, msg_received + i, sizeof(username_len));
+		memcpy(&username_len, msg_received_view + i, sizeof(username_len));
 		username_len = ntohl(username_len);
 
 		i += sizeof(username_len);
 
-		cout << (char*)(msg_received + i) << endl;
+		cout << (char*)(msg_received_view + i) << endl;
 
 		i += username_len;
 	}
 
 	cout << endl;
 
-	free(msg_received);
+	free(msg_received_view);
 
 	return 1;
 }
 
-int Client::exit_by_application(unsigned char* shared_key) { // TODO here|
+int Client::exit_by_application() { // TODO here|
 	size_t message_len = 1;
 	//Allocate message
 	char* message = (char*)malloc(message_len);
@@ -1037,7 +1059,7 @@ int Client::exit_by_application(unsigned char* shared_key) { // TODO here|
 	*type = TYPE_EXIT;
 	try {
 		//send message to server
-		int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, shared_key);
+		int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 		if (ret <= 0) {
 				cerr << "[Thread " << this_thread::get_id() << "] exit_by_application: "
 				<< "error send message to server" << endl;
@@ -2565,6 +2587,66 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
 	}
 
+	free(tag);
+	free(ciphertext);
+	free(iv);
+
+	return 1;
+}
+
+
+
+
+int Client::receive_plaintext2 (const int socket, thread_bridge* bridge, unsigned char* shared_key)
+{
+	long ret_long = -1;
+	
+	unsigned char* iv = nullptr;
+	unsigned char* ciphertext = nullptr;
+	unsigned char* tag = nullptr;
+
+	try {
+		// 1) Receive iv
+		ret_long = receive_message(server_socket, (void**)&iv);
+		if (ret_long <= 0) {
+			throw 0;
+		}
+		size_t iv_len = ret_long;
+
+		// 2) Receive ciphertext
+		ret_long = receive_message(server_socket, (void**)&ciphertext);
+		if (ret_long <= 0) {
+			throw 1;
+		}
+		size_t ciphertext_len = ret_long;
+
+
+		// 3) Receive tag
+		ret_long = receive_message(server_socket, (void**)&tag);
+		if (ret_long <= 0) {
+			throw 2;
+		}
+		// 4) Decrypt message
+		unsigned char* msg = nullptr;
+		size_t msg_len=0;
+		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
+		if (ret < 0) {
+			throw 3;
+		}
+		bridge->notify_new_message(msg, msg_len);
+		free(msg);
+	} catch (int e) {
+		if (e >= 3) {
+			free(tag);
+		}
+		if (e >= 2) {
+			free(ciphertext);
+		}
+		if (e >= 1) {
+			free(iv);
+		}
+		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
+	}
 	free(tag);
 	free(ciphertext);
 	free(iv);

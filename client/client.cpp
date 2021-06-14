@@ -45,5 +45,5 @@ int main(int argc, char** argv)
 
     cout << "=== WELCOME TO THE CHATROOM ===" << endl;
 
-    client.run();
+    client.exec();
 }
