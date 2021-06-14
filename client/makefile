@@ -9,8 +9,8 @@ client.exe: client.o client_class.o thread_bridge.o
 client.o: client.cpp
 	g++ $(CFLAGS) client.cpp
 
-client_thread_class.o: client_thread_class.cpp
-	g++ $(CFLAGS) client_thread_class.cpp
+client_class.o: client_class.cpp
+	g++ $(CFLAGS) client_class.cpp
 	
 thread_bridge.o: thread_bridge.cpp
 	g++ $(CFLAGS) thread_bridge.cpp

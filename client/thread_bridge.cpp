@@ -31,12 +31,10 @@ unsigned char* thread_bridge::wait_for_new_message (size_t& msg_len)
  */
 void thread_bridge::notify_new_message(unsigned char* msg, size_t msg_len)
 {
-	cout<<msg<<endl;
 	unique_lock<mutex> lock(mx_new_msg);
 	while (is_msg_ready) {
 		cv_new_msg.wait(lock);
 	}
-	cout<<"AAAAAA"<<endl;
 	
 	new_msg = msg;
 	new_msg_len = msg_len;

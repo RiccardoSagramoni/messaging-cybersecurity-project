@@ -7,7 +7,7 @@ Client::Client(const uint16_t _port, const string _username, const string _passw
 }
 
 // Initialize static public strings
-const string Client::keys_folder = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/keys/";
+const string Client::keys_folder = "keys/";
 const string Client::keys_extension = "_privkey.pem";
 const string Client::filename_CA_certificate = Client::keys_folder + 
 											   "FoundationsOfCybersecurity_cert.pem";
@@ -209,39 +209,35 @@ long Client::receive_message (const int socket, void** msg)
 
 
 
-
-
-
-void Client::exec() {
+/**
+ * Starts client services
+ */
+void Client::run()
+{
 	int ret;
-	thread_bridge* bridge;
+
 	// Negotiate a symmetric key with the server
 	ret = negotiate();
 	if (ret < 0) {
 		cerr << "Error: negotiate failed";
 		return;
 	}
-	thread t1(&Client::receive_plaintext2, this, server_socket, bridge, session_key);
-	thread t2(&Client::run, this, bridge);
-	t1.join();
-	t2.join();
+
+	// Start the thread which will receive all the message from the server
+	thread t1(&Client::input_slave_thread, this);
+
+	execute_user_commands();
+	// TODO handle failure (close socket!!!!)
+	
 }
 
-
-
-
-
-
-
-
-
-
 /**
- * Starts client services
+ * Wait for user's commands and execute them
  */
-void Client::run(thread_bridge* bridge)
+void Client::execute_user_commands () // TODO handle errors (close socket!!)
 {
 	int ret;
+	
 	while (true) {
 		print_command_options();
 
@@ -262,7 +258,7 @@ void Client::run(thread_bridge* bridge)
 			}
 		}
 		else if (command == "1") {
-			ret = show(bridge);
+			ret = show();
 			if (ret < 0) {
 				cout<<"error show()"<<endl;
 				break;
@@ -279,7 +275,7 @@ void Client::run(thread_bridge* bridge)
 				break;
 			}
 			cout<<"Bye!!"<<endl;
-			secure_free(session_key,session_key_len);
+			secure_free(session_key,session_key_len); // TODO dovrebbe essere spostato fuori da questa funzione
 			break;
 		}
 		else {
@@ -292,6 +288,7 @@ void Client::run(thread_bridge* bridge)
 		// if yes, inizia protocollo
 	}
 }
+
 
 //for send a request to talk to another client
 int Client::talk () 
@@ -981,7 +978,7 @@ int Client::send_command_to_server(unsigned char* msg, unsigned char* shared_key
  * 
  * @return 1 on success, -1 on failure
  */
-int Client::show(thread_bridge* bridge) 
+int Client::show() 
 {
 	unsigned char* msg_received_view = nullptr;
 	size_t msg_received_view_len = 0;
@@ -996,16 +993,8 @@ int Client::show(thread_bridge* bridge)
 		<< "error send message to server" << endl;
 		return -1;
 	}
-/*
-	// Receive response from the server
-	ret = receive_plaintext(server_socket, msg_received_view, msg_received_view_len, session_key);
-	if (ret <= 0) {
-		cerr << "[Thread " << this_thread::get_id() << "] show: "
-		<< "error receive response" << endl;
-		return -1;
-	}
-*/
-	msg_received_view = bridge->wait_for_new_message(msg_received_view_len);
+
+	msg_received_view = bridge.wait_for_new_message(msg_received_view_len);
 	// Check if the header the the response is correct
 	uint8_t message_type = get_message_type(msg_received_view);
 	if (message_type != SERVER_OK) {
@@ -1047,31 +1036,19 @@ int Client::show(thread_bridge* bridge)
 	return 1;
 }
 
-int Client::exit_by_application() { // TODO here|
-	size_t message_len = 1;
+int Client::exit_by_application() 
+{ // TODO here!
 	//Allocate message
-	char* message = (char*)malloc(message_len);
-	if (!message) {
+	char message[1] = {TYPE_EXIT};
+
+	//send message to server
+	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, session_key);
+	if (ret <= 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] exit_by_application: "
+		<< "error send message to server" << endl;
 		return -1;
 	}
-	//forge message type
-	uint8_t* type = (uint8_t*)&message[0];
-	*type = TYPE_EXIT;
-	try {
-		//send message to server
-		int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
-		if (ret <= 0) {
-				cerr << "[Thread " << this_thread::get_id() << "] exit_by_application: "
-				<< "error send message to server" << endl;
-				throw 1;
-		}
-		secure_free(message, message_len);
-	} catch (int e) {
-		if (e >= 1) {
-			secure_free(message, message_len);
-		}
-		return -1;
-	}
+
 	return 1;
 }
 
@@ -2541,6 +2518,22 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 	return 1;
 }
 
+/**
+ * Return the plaintext send from the server. 
+ * The ciphertext is supposed to have been encrypted and authenticated with AES-gcm.
+ * 
+ * This functions receives three messages from the client:
+ * 1) Initialization vector
+ * 2) Ciphertext
+ * 3) Tag
+ * 
+ * @param socket id of the socket
+ * @param msg on success it will point to the decrypted text
+ * @param msg_len on success it will contain the length of the decrypted message
+ * @key symmetric shared key used for the encryption
+ * 
+ * @return 1 on success, 0 if client closes the socket, -1 on failure 
+ */
 int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key)
 {
 	long ret_long = -1;
@@ -2596,60 +2589,27 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 
 
 
-
-int Client::receive_plaintext2 (const int socket, thread_bridge* bridge, unsigned char* shared_key)
+/**
+ * TODO
+ */
+void Client::input_slave_thread ()
 {
-	long ret_long = -1;
+	int ret;
+	unsigned char* msg;
+	size_t msg_len;
 	
-	unsigned char* iv = nullptr;
-	unsigned char* ciphertext = nullptr;
-	unsigned char* tag = nullptr;
+	while (true) { // TODO condizione di uscita?
+		// Receive message from server
+		ret = receive_plaintext(server_socket, msg, msg_len, session_key);
+		if (ret <= 0) {
+			// TODO
+			return;
+		}
 
-	try {
-		// 1) Receive iv
-		ret_long = receive_message(server_socket, (void**)&iv);
-		if (ret_long <= 0) {
-			throw 0;
-		}
-		size_t iv_len = ret_long;
+		// 2) Check message? Is it a request
+		// 2a) yes // TODO
 
-		// 2) Receive ciphertext
-		ret_long = receive_message(server_socket, (void**)&ciphertext);
-		if (ret_long <= 0) {
-			throw 1;
-		}
-		size_t ciphertext_len = ret_long;
-
-
-		// 3) Receive tag
-		ret_long = receive_message(server_socket, (void**)&tag);
-		if (ret_long <= 0) {
-			throw 2;
-		}
-		// 4) Decrypt message
-		unsigned char* msg = nullptr;
-		size_t msg_len=0;
-		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
-		if (ret < 0) {
-			throw 3;
-		}
-		bridge->notify_new_message(msg, msg_len);
-		free(msg);
-	} catch (int e) {
-		if (e >= 3) {
-			free(tag);
-		}
-		if (e >= 2) {
-			free(ciphertext);
-		}
-		if (e >= 1) {
-			free(iv);
-		}
-		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
+		// 2b) no
+		bridge.notify_new_message(msg, msg_len);
 	}
-	free(tag);
-	free(ciphertext);
-	free(iv);
-
-	return 1;
 }
