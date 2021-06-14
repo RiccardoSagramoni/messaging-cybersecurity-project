@@ -143,6 +143,7 @@ class Client {
 	
 public:
 	Client(const uint16_t _port, const string _name, const string _password);
+	~Client();
 	
 	void run();
 

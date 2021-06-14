@@ -6,6 +6,13 @@ Client::Client(const uint16_t _port, const string _username, const string _passw
 
 }
 
+Client::~Client()
+{
+	if (session_key) {
+		secure_free(session_key, session_key_len);
+	}
+}
+
 // Initialize static public strings
 const string Client::keys_folder = "keys/";
 const string Client::keys_extension = "_privkey.pem";
@@ -228,7 +235,7 @@ void Client::run()
 
 	execute_user_commands();
 	// TODO handle failure (close socket!!!!)
-	
+	// TODO close the other thread
 }
 
 /**
