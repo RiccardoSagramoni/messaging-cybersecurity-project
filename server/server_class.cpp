@@ -426,7 +426,6 @@ int Server::wait_end_talk (const string& user)
 	// Set user as available
 	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
 	client_data->available = true;
-	mutex_available.unlock();
 
 	return 1;
 }

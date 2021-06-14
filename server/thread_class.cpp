@@ -1696,7 +1696,7 @@ EVP_PKEY* ServerThread::get_client_public_key (const string& username)
 
 
 /**
- * Receive a new message from the client
+ * Receive a new message from the client and lock the input stream of the socket
  * 
  * @param msg on success it will point to the received message
  * 
