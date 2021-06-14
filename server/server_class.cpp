@@ -102,12 +102,16 @@ bool Server::add_new_client (string username, const int socket,
  * 
  * @param username string containing client's username
  * @param lock true to lock the socket, false to unlock it
- * @param input true to lock INPUT stream of socket, false to lock OUTPUT stream of socket
+ * @param stream 0 to lock INPUT stream of socket, 1 to lock OUTPUT stream of socket, 2 to lock both
  * 
  * @return true on success, false on failure
  */
-bool Server::handle_socket_lock (const string& username, const bool lock, const bool input)
+bool Server::handle_socket_lock (const string& username, const bool to_lock, const uint8_t stream)
 {
+	if (stream > 2) {
+		return false;
+	}
+	
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 	
@@ -122,17 +126,26 @@ bool Server::handle_socket_lock (const string& username, const bool lock, const 
 		return false;
 	}
 
-	// Select socket's mutex for required mode (input or output)
-	mutex& socket_mutex = input ? client_data->mutex_socket_in : client_data->mutex_socket_out;
-	
-	// Lock or unlock selected mutex
-	if (lock) {
-		socket_mutex.lock();
+	// Lock the correct stream of the socket
+	if (stream == 0) {
+		if (to_lock) client_data->mutex_socket_in.lock();
+		else client_data->mutex_socket_in.unlock();
+	}
+	else if (stream == 1) {
+		if (to_lock) client_data->mutex_socket_out.lock();
+		else client_data->mutex_socket_out.unlock();
 	}
 	else {
-		socket_mutex.unlock();
+		if (to_lock) {
+			// Avoid deadlock
+			lock(client_data->mutex_socket_in, client_data->mutex_socket_out);
+		}
+		else {
+			client_data->mutex_socket_out.unlock();
+			client_data->mutex_socket_in.unlock();
+		}
 	}
-	
+
 	return true;
 }
 
@@ -308,10 +321,11 @@ int Server::prepare_for_talking (const string& username, unsigned char*& key, si
 	}
 
 	// Check if the client is available to talk
-	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
 	if (!client_data->available) {
 		return -3;
 	}
+	client_data->available = false;
 	mutex_available.unlock();
 
 	// Copy shared key with client
@@ -357,12 +371,6 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 		return -1;
 	}
 
-	// Check if client is already unavailable
-	shared_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
-	if (!client_data->available) {
-		return -1;
-	}
-	mutex_available.unlock();
 
 	// Wait until the "wanted" client have chosen an interlocutor
 	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
@@ -370,11 +378,17 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 		client_data->ready_to_talk_cv.wait(talk_lock);
 	}
 
-	if (0 != asking_user.compare(client_data->interlocutor_user)) {
-		return -1;
+	if (0 == asking_user.compare(client_data->interlocutor_user)) {
+		// Client accepted request
+		return 1;
 	}
 
-	return 1;
+	talk_lock.unlock();
+
+	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
+	client_data->available = true;
+
+	return -1;
 }
 
 /**
@@ -383,7 +397,7 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
  * 
  * @param user name of the client that this thread serves
  * 
- * @return 1 on success, -1 on failure
+ * @return 1 on success, -1 on failure (user not online)
  */
 int Server::wait_end_talk (const string& user)
 {
@@ -458,7 +472,6 @@ int Server::notify_start_talk (const string& wanted_user, const string asking_us
 	client_data->has_chosen_interlocutor = true;
 	client_data->interlocutor_user = asking_user;
 	client_data->ready_to_talk_cv.notify_all();
-	talk_lock.unlock();
 
 	return 1;
 }
