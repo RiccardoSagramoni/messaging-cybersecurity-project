@@ -292,7 +292,7 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 
 		string username_has_sent_request;
 		//check for a request to talk
-		if (bridge.check_request_talk(username_has_sent_request))
+		if (bridge.check_request_talk(username_has_sent_request) == 1)
 		{
 			string buf;
 			cout<<"You have received a request to talk from "<<username_has_sent_request<<endl;
@@ -2714,7 +2714,9 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 		if (ret < 0) {
 			throw 2;
 		}
-
+cout<<iv<<endl;
+		cout<<ciphertext<<endl;
+		cout<<tag<<endl;
 	} catch (int e) {
 		if (e >= 2) {
 			free(ciphertext);
@@ -2778,6 +2780,10 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 			throw 2;
 		}
 		// 4) Decrypt message
+		cout<<iv<<endl;
+		cout<<ciphertext<<endl;
+		cout<<tag<<endl;
+		cout<<sizeof(tag)<<endl;
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
 		if (ret < 0) {
 			throw 3;
@@ -2810,17 +2816,17 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 void Client::input_slave_thread ()
 {
 	int ret;
-	unsigned char* msg;
-	size_t msg_len;
-	
+	unsigned char* msg=nullptr;
+	size_t msg_len=0;
 	while (true) { // TODO condizione di uscita?
 		// Receive message from server
 		ret = receive_plaintext(server_socket, msg, msg_len, session_key);
-		if (ret <= 0) {
+		if (ret != 1) {
 			// TODO
 			return;
 		}
 		uint8_t message_type = get_message_type(msg);
+		cout<<message_type<<endl;
 		if (message_type == SERVER_REQUEST_TO_TALK) {
 			string peer_username;
 			uint32_t peer_username_len = 0;
@@ -2830,7 +2836,6 @@ void Client::input_slave_thread ()
 			}
 			//deserialize length of username
 			peer_username_len = ntohl(*(uint32_t*)(msg + 1));
-
 			if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
 				//TODO send_error()
 				return;
@@ -2840,6 +2845,10 @@ void Client::input_slave_thread ()
 			peer_username = peer_username_c;
 			bridge.add_request_talk(peer_username);
 		}
-		bridge.notify_new_message(msg, msg_len);
+		else {
+			bridge.notify_new_message(msg, msg_len);
+		}
+		msg=nullptr;
+		msg_len=0;
 	}
 }
