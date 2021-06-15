@@ -14,7 +14,7 @@ Client::~Client()
 }
 
 // Initialize static public strings
-const string Client::keys_folder = "keys/";
+const string Client::keys_folder = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/keys/";
 const string Client::keys_extension = "_privkey.pem";
 const string Client::filename_CA_certificate = Client::keys_folder + 
 											   "FoundationsOfCybersecurity_cert.pem";
@@ -2822,7 +2822,6 @@ void Client::input_slave_thread ()
 			return;
 		}
 		uint8_t message_type = get_message_type(msg);
-		cout<<message_type<<endl;
 		if (message_type == SERVER_REQUEST_TO_TALK) {
 			string peer_username;
 			uint32_t peer_username_len = 0;
