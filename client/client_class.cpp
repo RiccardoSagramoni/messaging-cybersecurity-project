@@ -2714,9 +2714,7 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 		if (ret < 0) {
 			throw 2;
 		}
-cout<<iv<<endl;
-		cout<<ciphertext<<endl;
-		cout<<tag<<endl;
+
 	} catch (int e) {
 		if (e >= 2) {
 			free(ciphertext);
@@ -2779,15 +2777,13 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		if (ret_long <= 0) {
 			throw 2;
 		}
+		
 		// 4) Decrypt message
-		cout<<iv<<endl;
-		cout<<ciphertext<<endl;
-		cout<<tag<<endl;
-		cout<<sizeof(tag)<<endl;
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
 		if (ret < 0) {
 			throw 3;
 		}
+
 	} catch (int e) {
 		if (e >= 3) {
 			free(tag);

@@ -425,9 +425,7 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		if (ret < 0) {
 			throw 2;
 		}
-cout<<iv<<endl;
-		cout<<ciphertext<<endl;
-		cout<<tag<<endl;
+
 	} catch (int e) {
 		if (e >= 2) {
 			free(ciphertext);
@@ -497,9 +495,7 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		if (ret < 0) {
 			throw 3;
 		}
-	cout<<iv<<endl;
-		cout<<ciphertext<<endl;
-		cout<<tag<<endl;
+
 	} catch (int e) {
 		if (e >= 3) {
 			free(tag);
@@ -633,6 +629,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 	EVP_PKEY_free(my_dh_key);
 	EVP_PKEY_free(peer_key);
 
+	key_len = session_key_len;
 	return session_key;
 }
 
