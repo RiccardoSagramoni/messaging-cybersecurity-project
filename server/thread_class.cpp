@@ -14,6 +14,13 @@ ServerThread::ServerThread(Server* serv, const int socket, const sockaddr_in add
 	main_client_address = addr;
 }
 
+ServerThread::~ServerThread ()
+{
+	if (client_key != nullptr) {
+		secure_free(client_key, client_key_len);
+	}
+}
+
 const string ServerThread::filename_prvkey = "privkey.pem";
 const string ServerThread::filename_certificate = "certificate.pem";
 
@@ -59,7 +66,7 @@ void ServerThread::run ()
 			unsigned char* msg = nullptr;
 			size_t msg_len;
 
-			// 3a) Wait for command
+			// 3b) Wait for command and lock socket input
 			ret = get_new_client_command(msg, msg_len);
 			if (ret < 0) {
 				continue;
@@ -69,19 +76,33 @@ void ServerThread::run ()
 				return;
 			}
 
-			// 3b) Execute received command
+			// Lock socket output
+			if (!server->handle_socket_lock(client_username, true, 1)) {
+				return;
+			}
+
+			// 3c) Execute received command
 			ret = execute_client_command(msg, msg_len);
 			free(msg);
 			if (ret < 0) {
+				server->handle_socket_lock(client_username, false, 2);
 				execute_exit();
 				return;
 			}
 			else if (ret == 0) { // executed exit
 				return;
 			}
+
+			// 3d) Unlock socket (both input and output)
+			if(!server->handle_socket_lock(client_username, false, 2)) {
+				return;
+			}
+
+			this_thread::yield();
 		}
 
 	} catch (...) { // Handle unpredictable failure
+		server->handle_socket_lock(client_username, false, 2);
 		execute_exit();
 		rethrow_exception(current_exception());
 	}
@@ -354,7 +375,7 @@ int ServerThread::send_error (const int socket, const uint8_t type, const unsign
 	uint8_t msg[2] = {SERVER_ERR, type};
 	
 	if (!own_lock) {
-		if (!server->handle_socket_lock(client_username, true, false)) {
+		if (!server->handle_socket_lock(client_username, true, 1)) {
 			return -1;
 		}
 	}
@@ -362,7 +383,7 @@ int ServerThread::send_error (const int socket, const uint8_t type, const unsign
 	int ret = send_plaintext(socket, msg, 2, key);
 
 	if (!own_lock) {
-		if (!server->handle_socket_lock(client_username, false, false)) {
+		if (!server->handle_socket_lock(client_username, false, 1)) {
 			return -1;
 		}
 	}
@@ -524,10 +545,6 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
  */
 int ServerThread::execute_exit ()
 {	
-	if (client_key != nullptr) {
-		secure_free(client_key, client_key_len);
-		client_key = nullptr;
-	}
 	return server->remove_client(client_username);
 }
 
@@ -1679,7 +1696,7 @@ EVP_PKEY* ServerThread::get_client_public_key (const string& username)
 
 
 /**
- * Receive a new message from the client
+ * Receive a new message from the client and lock the input stream of the socket
  * 
  * @param msg on success it will point to the received message
  * 
@@ -1691,7 +1708,7 @@ int ServerThread::get_new_client_command (unsigned char*& msg, size_t& msg_len)
 	
 	try {
 		// 1) Get lock for input socket
-		if (!server->handle_socket_lock(client_username, true, true)) {
+		if (!server->handle_socket_lock(client_username, true, 0)) {
 			throw 0;
 		}
 		
@@ -1703,12 +1720,10 @@ int ServerThread::get_new_client_command (unsigned char*& msg, size_t& msg_len)
 	
 	} catch (int e) {
 		if (e >= 1) {
-			server->handle_socket_lock(client_username, false, true);
+			server->handle_socket_lock(client_username, false, 0);
 		}
 		return (ret == 0) ? 0 : -1; // If ret is 0, then socket has been closed
 	}
-
-	server->handle_socket_lock(client_username, false, true);
 
 	return 1;
 }
@@ -1732,17 +1747,18 @@ int ServerThread::execute_client_command (const unsigned char* msg, const size_t
 		ret = execute_talk(msg, msg_len);
 	}
 	else if (request_type == TYPE_EXIT) {
+		server->handle_socket_lock(client_username, false, 2);
 		ret = execute_exit();
 		return (ret != 1) ? -1 : 0;
 	}
 	else if (request_type == ACCEPT_TALK || request_type == REFUSE_TALK) {
 		ret = execute_accept_talk(msg, msg_len, (request_type == ACCEPT_TALK));
 		if (ret < 0) {
-			send_error(client_socket, SERVER_ERR, client_key, false);
+			send_error(client_socket, SERVER_ERR, client_key, true);
 		}
 	}
 	else { // Error
-		send_error(client_socket, ERR_WRONG_TYPE, client_key, false);
+		send_error(client_socket, ERR_WRONG_TYPE, client_key, true);
 		return -1;
 	}
 
@@ -1801,22 +1817,10 @@ int ServerThread::execute_show ()
 		pos += s.length() + 1;
 	}
 
-	// 3) Get lock on socket output stream
-	if (!server->handle_socket_lock(client_username, true, false)) {
-		free(message);
-		return -1;
-	}
-
-	// 4) Send message
+	// 3) Send message
 	int ret = send_plaintext(client_socket, (unsigned char*)message, message_len, client_key);
 	free(message);
 	if (ret < 0) {
-		server->handle_socket_lock(client_username, false, false);
-		return -1;
-	}
-
-	// 5) Release lock on socket output stream
-	if (!server->handle_socket_lock(client_username, false, false)) {
 		return -1;
 	}
 
@@ -1865,17 +1869,6 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 			throw 0;
 		}
 
-		// Lock client's socket
-		if (!server->handle_socket_lock(client_username, true, false)) {
-			return_value = -1;
-			throw 1;
-		}
-
-		if (!server->handle_socket_lock(client_username, true, true)) {
-			return_value = -1;
-			throw 2;
-		}
-
 		// 3) Prepare for talking
 		ret = server->prepare_for_talking(peer_username, peer_key, peer_key_len);
 		if (ret < 0) {
@@ -1896,6 +1889,8 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 			throw 4;
 		}
 
+		server->handle_socket_lock(peer_username, false, 1); // Unlock socket output stream
+
 		// 5) Wait for peer answer
 		ret = wait_answer_to_request_to_talk(peer_socket, peer_username, peer_key);
 		if (ret < 0) {
@@ -1904,13 +1899,9 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		}
 
 		// Lock peer's socket both for input and output
-		if(!server->handle_socket_lock(peer_username, true, false)) {
+		if(!server->handle_socket_lock(peer_username, true, 2)) {
 			send_error(client_socket, SERVER_ERR, client_key, true);
 			throw 5;
-		}
-		if (!server->handle_socket_lock(peer_username, true, true)) {
-			send_error(client_socket, SERVER_ERR, client_key, true);
-			throw 6;
 		}
 
 		// 6) Notify first client
@@ -1936,22 +1927,13 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 
 	} catch (int e) {
 		if (e >= 7) {
-			server->handle_socket_lock(peer_username, false, false);
-		}
-		if (e >= 6) {
-			server->handle_socket_lock(peer_username, false, true);
+			server->handle_socket_lock(peer_username, false, 2);
 		}
 		if (e >= 5) {
 			server->set_available_status(peer_username, true);
 		}
 		if (e >= 4) {
 			secure_free(peer_key, peer_key_len);
-		}
-		if (e >= 3) {
-			server->handle_socket_lock(client_username, false, true);
-		}
-		if (e >= 2) {
-			server->handle_socket_lock(client_username, false, false);
 		}
 		if (e >= 1) {
 			server->set_available_status(client_username, true);
@@ -1960,12 +1942,9 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		return return_value;
 	}
 	
-	server->handle_socket_lock(peer_username, false, false);
-	server->handle_socket_lock(peer_username, false, true);
+	server->handle_socket_lock(peer_username, false, 2);
 	server->set_available_status(peer_username, true);
 	secure_free(peer_key, peer_key_len);
-	server->handle_socket_lock(client_username, false, true);
-	server->handle_socket_lock(client_username, false, false);
 	server->set_available_status(client_username, true);
 
 	return 1;
@@ -2223,10 +2202,14 @@ int ServerThread::execute_accept_talk (const unsigned char* msg, const size_t ms
 	}
 
 	if (accept) {
+		// Release lock so that the thread which sent the "request to talk"
+		// can take control on this thread's socket
+		server->handle_socket_lock(client_username, false, 2);
 		ret = server->wait_end_talk(client_username);
 		if (ret < 0) {
 			return -1;
 		}
+		server->handle_socket_lock(client_username, true, 2);
 	}
 
 	return 1;
