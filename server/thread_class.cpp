@@ -647,6 +647,7 @@ unsigned char* ServerThread::authenticate_and_negotiate_key (string& username, s
 	EVP_PKEY_free(my_dh_key);
 	EVP_PKEY_free(peer_key);
 
+	key_len = session_key_len;
 	return session_key;
 }
 
