@@ -1893,7 +1893,7 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		server->handle_socket_lock(peer_username, false, 1); // Unlock socket output stream
 
 		// 5) Wait for peer answer
-		ret = wait_answer_to_request_to_talk(peer_socket, peer_username, peer_key);
+		ret = server->wait_start_talk(peer_username, client_username);
 		if (ret < 0) {
 			send_error(client_socket, SERVER_ERR, client_key, true);
 			throw 4;
@@ -1986,17 +1986,6 @@ int ServerThread::send_request_to_talk (const int socket, const string& from_use
 	}
 
 	return 1;
-}
-
-/**
- * // TODO
- * @param socket 
- * @param key 
- * @return 1 on success, -1 on failure 
- */
-int ServerThread::wait_answer_to_request_to_talk (const int socket, const string& peer_username, const unsigned char* key)
-{
-	return server->wait_start_talk(peer_username, client_username);
 }
 
 /**

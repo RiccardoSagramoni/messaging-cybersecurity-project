@@ -98,7 +98,7 @@ public:
 	// }
 
 	int prepare_for_talking (const string& username, unsigned char*& key, size_t& key_len);
-	int wait_start_talk (const string& user_dest, const string& user_src);
+	int wait_start_talk (const string& wanted_user, const string& asking_user);
 	int wait_end_talk (const string& user);
 	int notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting);
 	int notify_end_talk (const string& user);
@@ -184,7 +184,6 @@ class ServerThread {
 	// Talk {
 
 	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key);
-	int wait_answer_to_request_to_talk (const int socket, const string& username, const unsigned char* key);
 	int send_notification_for_accepted_talk_request();
 	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key);
 	int talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
