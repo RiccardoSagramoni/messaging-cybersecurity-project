@@ -735,7 +735,7 @@ int Client::send_message_to_client(unsigned char* clients_session_key, unsigned 
 			}
 
 			//send final packet to server
-			final_ciphertext_len += ciphertext_len + iv_len + tag_len + 4;
+			final_ciphertext_len += ciphertext_len + iv_len + tag_len + 1;
 			final_ciphertext = (char*)malloc(final_ciphertext_len);
 			if (!final_ciphertext) {
 				throw 4;
@@ -748,13 +748,13 @@ int Client::send_message_to_client(unsigned char* clients_session_key, unsigned 
 			else {
 				type = (uint8_t*)&final_ciphertext[0];
 				*type = TALKING;
-				final_ciphertext[1]=iv_len;
+				/*final_ciphertext[1]=iv_len;
 				final_ciphertext[2]=ciphertext_len;
-				final_ciphertext[3]=tag_len;
+				final_ciphertext[3]=tag_len;*/
 			}
-			memcpy(final_ciphertext + 4, ciphertext, ciphertext_len);
-			memcpy(final_ciphertext + ciphertext_len + 4, iv, iv_len);
-			memcpy(final_ciphertext + iv_len + ciphertext_len + 4, tag, tag_len + 1);
+			memcpy(final_ciphertext + 1, ciphertext, ciphertext_len);
+			memcpy(final_ciphertext + ciphertext_len + 1, iv, iv_len);
+			memcpy(final_ciphertext + iv_len + ciphertext_len + 1, tag, tag_len + 1);
 
 			//send it
 			int ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, server_session_key);
@@ -824,18 +824,7 @@ int Client::receive_message_from_client(unsigned char* clients_session_key, unsi
 			break;
 		}
 		else if (message_type == SERVER_OK) {
-			cout<<"this is the iv"<<endl;
-			for (size_t i=0; i<message[1]; i++) {
-				cout<<message[i]<<endl;
-			}
-			cout<<"this is the ciphertext"<<endl;
-			for (size_t i=0; i<message[2]; i++) {
-				cout<<message[i]<<endl;
-			}
-			cout<<"this is the tag"<<endl;
-			for (size_t i=0; i<message[3]; i++) {
-				cout<<message[i]<<endl;
-			}
+			//cout message
 
 
 		}
