@@ -14,7 +14,7 @@ Client::~Client()
 }
 
 // Initialize static public strings
-const string Client::keys_folder = "/home/par/Desktop/git_repo_cybersecurity/Cybersecurity-Project/client/keys/";
+const string Client::keys_folder = "keys/";
 const string Client::keys_extension = "_privkey.pem";
 const string Client::filename_CA_certificate = Client::keys_folder + 
 											   "FoundationsOfCybersecurity_cert.pem";
@@ -282,7 +282,6 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 				break;
 			}
 			cout<<"Bye!!"<<endl;
-			secure_free(session_key,session_key_len); // TODO dovrebbe essere spostato fuori da questa funzione
 			break;
 		}
 		else {
@@ -300,9 +299,19 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 			cin>>buf;
 			if (buf == "1") {
 				cout<<"Request from "<<username_has_sent_request<<" accepted"<<endl;
+				ret = accept_request_to_talk(session_key, username_has_sent_request);
+				if (ret !=1) {
+					cout<<"accept request error"<<endl;
+					break;
+				}
 			}
 			else {
 				cout<<"Request from "<<username_has_sent_request<<" refused"<<endl;
+				ret = reject_request_to_talk(session_key, username_has_sent_request);
+				if (ret !=1) {
+					cout<<"reject request error"<<endl;
+					break;
+				}
 			}
 		}
 	}
@@ -319,8 +328,6 @@ int Client::talk ()
 	unsigned char* plaintext = nullptr;
 	size_t plaintext_len = 0;
 	
-	//TODO sleep thread receive request to talk
-
 	//get user to talk
 	cout << "insert username of the client:  ";
 	cin >> peer_username;
@@ -359,13 +366,6 @@ int Client::talk ()
 
 		free(message);
 
-		// receive ok from server
-		/*ret = receive_plaintext(server_socket, plaintext, plaintext_len, session_key);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error receive response" << endl;
-			throw 1;
-		}*/
 		plaintext = bridge.wait_for_new_message(plaintext_len);
 	} catch (int e) {
 		if (e >= 1) {
@@ -376,27 +376,30 @@ int Client::talk ()
 
 	// Extract message type
 	uint8_t message_type = get_message_type(plaintext);
-	if (message_type != SERVER_OK) {
+	if (message_type == SERVER_ERR) {
+		cout<<"client has refused the rhe request"<<endl;
+		return 1;
+	}
+	else if (message_type == SERVER_OK) {
+		free(plaintext);
+		// DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
+		unsigned char* clients_session_key = nullptr;
+		size_t clients_session_key_lenght = 0;
+		ret = negotiate_key_with_client(clients_session_key, clients_session_key_lenght);
+		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "negotiation key failed" << endl;
+			return -1;
+		}
+		thread t2(&Client::receive_message_from_client, this, clients_session_key, session_key);
+		send_message_to_client(clients_session_key, session_key);
+		secure_free(clients_session_key, clients_session_key_lenght);
+	}
+	else {
 		cerr << "[Thread " << this_thread::get_id() << "] talk: "
 		<< "request to talk failed" << endl;
 		return -1;
 	}
-	free(plaintext);
-
-	// DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
-	unsigned char* clients_session_key = nullptr;
-	size_t clients_session_key_lenght = 0;
-	ret = negotiate_key_with_client(clients_session_key, clients_session_key_lenght);
-	if (ret < 0) {
-		cerr << "[Thread " << this_thread::get_id() << "] talk: "
-		<< "negotiation key failed" << endl;
-		return -1;
-	}
-
-	thread t2(&Client::receive_message_from_client, this, clients_session_key, session_key);
-	send_message_to_client(clients_session_key, session_key);
-
-	secure_free(clients_session_key, clients_session_key_lenght);
 	return 1;
 }
 
@@ -526,7 +529,7 @@ int Client::negotiate_key_with_client (unsigned char*& clients_session_key, size
 
 
 
-
+//accept request to talk from another client
 int Client::accept_request_to_talk(unsigned char* server_session_key, string peer_username) {
 	char* message = nullptr;
 	size_t message_len = 1;
@@ -693,267 +696,6 @@ int Client::accept_request_to_talk(unsigned char* server_session_key, string pee
 	return 1;
 }
 
-
-
-
-
-
-
-
-//receive request to talk from another client
-/*int Client::receive_request_to_talk(unsigned char* session_key) {
-	int ret = 0;
-	unsigned char* plaintext = nullptr;
-	size_t plaintext_len = 0;
-	string peer_username;
-	uint32_t peer_username_len = 0;
-	char* message = nullptr;
-	size_t message_len = 1;
-	unsigned char* clients_session_key = nullptr;
-	size_t clients_session_key_lenght = 0;
-
-	try {
-		//receive ok by server
-		ret = receive_plaintext(server_socket, plaintext, plaintext_len, session_key);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error receive message from server" << endl;
-			throw 4;
-		}
-	} catch (int e) {
-		if (e >= 4) {
-			secure_free(plaintext, plaintext_len);
-		}
-		return -1;
-	}
-	uint8_t message_type = get_message_type(plaintext);
-	if (message_type==SERVER_REQUEST_TO_TALK) {
-		//TODO sleep run thread
-
-		//check is msg is valid (is a null terminated string)
-		if (plaintext[plaintext_len - 1] != '\0' || plaintext_len <= sizeof(uint32_t) + 1) {
-			throw 0;
-		}
-
-		//deserialize length of username
-		peer_username_len = ntohl(*(uint32_t*)(plaintext + 1));
-
-		if (plaintext_len != sizeof(uint32_t) + 1 + peer_username_len) {
-			//TODO send_error()
-			throw 0;
-		}
-
-		//extract peer's username and convert it to string
-		char* peer_username_c = (char*)(plaintext + 1 + sizeof(uint32_t));
-		peer_username = peer_username_c;
-
-
-		cout<<"you have received a request to talk from "<<peer_username<<endl;
-		cout<<"press '1' if you want to accept it, '0' if you want to refuse it"<<endl;
-		string buf;
-		cin>>buf;
-		if (buf == "1") {
-			//store username_lenght
-			message_len += sizeof(uint32_t) + peer_username.length() + 1;
-			//allocate msg
-			message = (char*)malloc(message_len);
-			if (!message) {
-				return -1;
-			}
-			//craft msg for response (accept || lenght username client sender || username client sender)
-			uint8_t* type = (uint8_t*)&message[0];
-			*type = ACCEPT_TALK;
-			//insert username length
-			uint32_t string_size = strlen(peer_username.c_str()) + 1;
-			string_size = htonl(string_size);
-			memcpy(message + 1, &string_size, sizeof(string_size));
-			//insert username
-			memcpy(message + 5, peer_username.c_str(), peer_username.length() + 1);
-			if (!message) {
-				return -1;
-			}
-			try {
-				//send message to server for accepting
-				int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
-				if (ret <= 0) {
-					cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-					<< "error send message to server for accept" << endl;
-					throw 1;
-				} 
-			}	catch (int e) {
-					if (e >= 1) {
-						secure_free(plaintext, plaintext_len);
-						secure_free(message, message_len);
-					}
-					return -1;
-			}
-			secure_free(message, message_len);
-			secure_free(plaintext, plaintext_len);
-		}
-		else if (buf == "0") {
-			//store username_lenght
-			message_len += sizeof(uint32_t) + peer_username.length() + 1;
-			//allocate msg
-			message = (char*)malloc(message_len);
-			if (!message) {
-				return -1;
-			}
-			//forge message type
-			uint8_t* type = (uint8_t*)&message[0];
-			*type = REFUSE_TALK;
-			try {
-				//send message to server for refusing
-				int ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
-				if (ret <= 0) {
-					cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-					<< "error send message to server for refuse" << endl;
-					throw 1;
-				} 
-			}	catch (int e) {
-					if (e >= 1) {
-						secure_free(plaintext, plaintext_len);
-						secure_free(message, message_len);
-					}
-					return -1;
-			}
-			secure_free(plaintext, plaintext_len);
-			secure_free(message, message_len);
-			return 0;
-		}
-		else {
-			//TODO
-			return -1;
-		}
-	}
-	else {
-		//TODO send error to server
-	}
-	//craft and send g**b
-	//generate g^b
-	EVP_PKEY* my_dh_key = generate_key_dh();
-	if (!my_dh_key) {
-		cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-		<< "error generate key" << endl;
-		return -1;
-	}
-
-
-
-	BIO* mbio = nullptr;
-	char* pubkey_buf = nullptr;
-	uint32_t pubkey_size = 0;
-	BIO* mem_bio = nullptr;
-	unsigned char* key = nullptr;
-	EVP_PKEY* peer_key = nullptr;
-	size_t key_len = 0;
-	try {
-		//serialize my_dh_key
-		mbio = BIO_new(BIO_s_mem());
-		if (!mbio) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error bio_new" << endl;
-			throw 1;
-		}
-
-		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error write bio" << endl;
-			throw 1;
-		}
-		
-		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
-		if (ret_long <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error get mem bio pub key" << endl;
-			throw 1;
-		}
-		pubkey_size = (uint32_t)ret_long;
-
-
-		//receive g^a and deserialize it
-		ret = receive_plaintext(server_socket, key, key_len, session_key);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error receive client key" << endl;
-			throw 2;
-		}
-		
-		mem_bio = BIO_new(BIO_s_mem());
-		if (!mem_bio) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error bio_new" << endl;
-			throw 3;
-		}
-		
-		ret = BIO_write(mem_bio, key, key_len);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error bio_write" << endl;
-			throw 3;
-		}
-		peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
-		if (!peer_key) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error pem read" << endl;
-			throw 3;
-		}
-
-
-		//send g^a
-		ret = send_plaintext(server_socket, (unsigned char*)pubkey_buf, pubkey_size, session_key);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_request_to_talk: "
-			<< "error sending pub key" << endl;
-			throw 4;
-		}
-
-		//get session key for clients comunications
-		clients_session_key_lenght = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
-		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_lenght);
-		if (!clients_session_key) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error derive session key" << endl;
-			throw 5;
-		}
-
-
-
-	}catch (int e) {
-		if (e >= 5) {
-			secure_free(clients_session_key, clients_session_key_lenght);
-		}
-		if (e >= 4) {
-			secure_free(pubkey_buf, pubkey_size);
-		}
-		if (e >= 3) {
-			BIO_free(mem_bio);
-		}
-		if (e >= 2) {
-			
-			secure_free(key, key_len);
-		}
-		if (e >= 1) {
-			BIO_free(mbio);
-		}
-		return -1;
-	}
-	BIO_free(mem_bio);
-	secure_free(key, key_len);
-	secure_free(pubkey_buf, pubkey_size);
-	BIO_free(mbio);
-
-
-
-
-	secure_free(clients_session_key, clients_session_key_lenght);
-	return 1;
-}
-
-
-*/
-
-
 int Client::send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key) {
 	string message;
 	int ret;
@@ -993,7 +735,7 @@ int Client::send_message_to_client(unsigned char* clients_session_key, unsigned 
 			}
 
 			//send final packet to server
-			final_ciphertext_len += ciphertext_len + iv_len + tag_len + 1;
+			final_ciphertext_len += ciphertext_len + iv_len + tag_len + 4;
 			final_ciphertext = (char*)malloc(final_ciphertext_len);
 			if (!final_ciphertext) {
 				throw 4;
@@ -1006,10 +748,13 @@ int Client::send_message_to_client(unsigned char* clients_session_key, unsigned 
 			else {
 				type = (uint8_t*)&final_ciphertext[0];
 				*type = TALKING;
+				final_ciphertext[1]=iv_len;
+				final_ciphertext[2]=ciphertext_len;
+				final_ciphertext[3]=tag_len;
 			}
-			memcpy(final_ciphertext + 1, ciphertext, ciphertext_len);
-			memcpy(final_ciphertext + ciphertext_len + 1, iv, iv_len);
-			memcpy(final_ciphertext + iv_len + ciphertext_len + 1, tag, tag_len + 1);
+			memcpy(final_ciphertext + 4, ciphertext, ciphertext_len);
+			memcpy(final_ciphertext + ciphertext_len + 4, iv, iv_len);
+			memcpy(final_ciphertext + iv_len + ciphertext_len + 4, tag, tag_len + 1);
 
 			//send it
 			int ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, server_session_key);
@@ -1061,13 +806,6 @@ int Client::receive_message_from_client(unsigned char* clients_session_key, unsi
 
 	while(true) {
 		try {
-			//receive it
-			/*int ret = receive_plaintext(server_socket, plaintext_from_server, plaintext_from_server_len, server_session_key);
-			if (ret <= 0) {
-					cerr << "[Thread " << this_thread::get_id() << "] receive_message_from_client: "
-					<< "error receive message from server" << endl;
-					throw 1;
-			}*/
 			plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
 		} catch (int e) {
 		
@@ -1086,15 +824,26 @@ int Client::receive_message_from_client(unsigned char* clients_session_key, unsi
 			break;
 		}
 		else if (message_type == SERVER_OK) {
-			cout<<"messagge received, it said something"<<endl;
-			cout<<plaintext_from_server<<endl;
+			cout<<"this is the iv"<<endl;
+			for (size_t i=0; i<message[1]; i++) {
+				cout<<message[i]<<endl;
+			}
+			cout<<"this is the ciphertext"<<endl;
+			for (size_t i=0; i<message[2]; i++) {
+				cout<<message[i]<<endl;
+			}
+			cout<<"this is the tag"<<endl;
+			for (size_t i=0; i<message[3]; i++) {
+				cout<<message[i]<<endl;
+			}
+
+
 		}
-		//TODO get message
-		secure_free(plaintext_from_server, plaintext_from_server_len);
 	}
 	if (!control) {
 		return -1;
 	}
+	secure_free(plaintext_from_server, plaintext_from_server_len);
 	terminate();
 	return 1;
 }
@@ -1104,7 +853,18 @@ int Client::receive_message_from_client(unsigned char* clients_session_key, unsi
 
 
 
-
+int Client::reject_request_to_talk(unsigned char* server_session_key, string peer_username) {
+	// Prepare request for show 
+	char message[1] = {REFUSE_TALK};
+	// Send message to server
+	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, session_key);
+	if (ret <= 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] show: "
+		<< "error send message to server" << endl;
+		return -1;
+	}
+	return 1;
+}
 
 
 
