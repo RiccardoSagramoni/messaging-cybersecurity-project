@@ -131,8 +131,9 @@ class Client {
 	uint8_t get_message_type(const unsigned char* msg);
 	
 	int exit_by_application();
-	int send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key);
-	int receive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
+	int send_message_to_client(unsigned char* clients_session_key);
+	int send_end_talking_message();
+	int receive_message_from_client(unsigned char* clients_session_key);
 	int negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len);
 	int accept_request_to_talk(unsigned char* server_session_key, string peer_username);
 	int reject_request_to_talk(unsigned char* server_session_key, string peer_username);
