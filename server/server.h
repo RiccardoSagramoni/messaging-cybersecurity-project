@@ -84,7 +84,7 @@ public:
 	int accept_client (sockaddr_in* client_addr);
 	bool add_new_client (string username, const int socket, 
 	                     const unsigned char* key, const size_t key_len);
-	bool handle_socket_lock (const string& username, const bool lock, const bool input);
+	bool handle_socket_lock (const string& username, const bool to_lock, const uint8_t stream);
 	unsigned char* get_client_shared_key (const string& username, size_t& key_len);
 	int remove_client (const string& username);
 	
@@ -208,6 +208,7 @@ class ServerThread {
 
 public:
 	ServerThread(Server* _server, const int socket, const sockaddr_in addr);
+	~ServerThread();
 	
 	void run();
 };
