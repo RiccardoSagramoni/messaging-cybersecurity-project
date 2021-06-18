@@ -745,15 +745,78 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 				throw 2;
 			}
 
-			uint8_t* type = (uint8_t*)&final_ciphertext[0];
+
+
+
+			size_t message_len = 2 + iv_len + (sizeof(uint32_t)) + ciphertext_len + (sizeof(uint32_t)) + tag_len + (sizeof(uint32_t));
+
+
+	// 2b) Allocate message
+	char* message = (char*)malloc(message_len);
+	if (!message) {
+		return -1;
+	}
+
+	// 2c) Initialise message
+	uint8_t* type = (uint8_t*)&message[0];
+	*type = TALKING;
+	size_t pos = 1;
+
+	
+		// a) Insert chipertext length
+		uint32_t chi_size = ciphertext_len + 1;
+		chi_size = htonl(chi_size);
+		uint32_t tag_siz = tag_len + 1;
+		tag_siz = htonl(tag_siz);
+		uint32_t iv_siz = iv_len + 1;
+		iv_siz = htonl(iv_siz);
+		memcpy(message + pos, &chi_size, sizeof(chi_size));
+		pos += sizeof(chi_size);
+
+		// b) Insert chipertext
+		memcpy(message + pos, ciphertext, ciphertext_len + 1);
+		pos += ciphertext_len + 1;
+
+		// a) Insert tag length
+		memcpy(message + pos, &tag_siz, sizeof(tag_siz));
+		pos += sizeof(tag_siz);
+
+		// b) Insert tag
+		memcpy(message + pos, tag, tag_len + 1);
+		pos += tag_len + 1;
+
+
+		// a) Insert iv length
+		
+		memcpy(message + pos, &iv_siz, sizeof(iv_siz));
+		pos += sizeof(iv_siz);
+
+		// b) Insert iv
+		memcpy(message + pos, iv, iv_len + 1);
+		pos += iv_len + 1;
+	
+
+
+
+
+
+
+
+
+
+
+
+
+
+			/*uint8_t* type = (uint8_t*)&final_ciphertext[0];
 			*type = TALKING;
 
 			memcpy(final_ciphertext + 1, iv, iv_len);
 			memcpy(final_ciphertext + ciphertext_len + 1, ciphertext, ciphertext_len);
-			memcpy(final_ciphertext + iv_len + ciphertext_len + 1, tag, tag_len);
+			memcpy(final_ciphertext + iv_len + ciphertext_len + 1, tag, tag_len);*/
 
 			//send it
-			int ret = send_plaintext(server_socket, final_ciphertext, final_ciphertext_len, session_key);
+			int ret = send_plaintext(server_socket,(unsigned char*) message, message_len, session_key);
 			if (ret <= 0) {
 				cerr << "[Thread " << this_thread::get_id() << "] send_message_to_client: "
 				<< "error send message to server" << endl;
@@ -819,6 +882,43 @@ int Client::receive_message_from_client(unsigned char* clients_session_key) // T
 		else if (message_type == SERVER_OK) {
 			// TODO !!! decrypt message received from peer client
 			//cout message
+
+
+
+
+
+		size_t i = 1;
+		// Extract length of username
+		uint32_t chiper_len;
+		memcpy(&chiper_len, plaintext_from_server + i, sizeof(chiper_len));
+		chiper_len = ntohl(chiper_len);
+		i += chiper_len;
+		unsigned char* ciphertext = nullptr;
+		memcpy(ciphertext, plaintext_from_server + i, chiper_len);
+		i += chiper_len;
+
+		uint32_t tag_len;
+		memcpy(&tag_len, plaintext_from_server + i, sizeof(tag_len));
+		tag_len = ntohl(tag_len);
+		i += sizeof(tag_len);
+		unsigned char* tag;
+		memcpy(&tag, plaintext_from_server + i, tag_len);
+		i += tag_len;
+
+		uint32_t iv_len;
+		memcpy(&iv_len, plaintext_from_server + i, sizeof(iv_len));
+		iv_len = ntohl(iv_len);
+		i += sizeof(iv_len);
+		unsigned char* iv;
+		memcpy(&iv, plaintext_from_server + i, iv_len);
+		i += iv_len;
+
+
+	
+
+
+
+
 		}
 	}
 
