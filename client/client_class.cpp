@@ -324,7 +324,7 @@ int Client::talk ()
 	size_t plaintext_len = 0;
 	
 	//get user to talk
-	cout << "insert username of the client:  ";
+	cout << "Insert username of the client:  ";
 	cin >> peer_username;
 	if (peer_username.empty()) {
 		return -1;
@@ -708,14 +708,17 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 	unsigned char* final_ciphertext = nullptr;
 	size_t final_ciphertext_len = 0;
 
-	cout << "START CHAT" << endl << endl;
+	cout << "START CHAT" << endl;
 
 	while (true) {
-		cin >> message;
-		// TODO check error cin
-
 		try {
-			// 1) CHECK IF READ MESSAGE IS "EXIT FROM TALK"
+			// 1) GET MESSAGE FROM STANDARD INPUT
+			getline(cin, message);
+			if (cin.rdstate() && !cin.good()) {
+				throw 0;
+			}
+		
+			// 2) CHECK IF READ MESSAGE IS "EXIT FROM TALK"
 			if (message == "!exit") {
 				ret = send_end_talking_message();
 				if (ret < 0) {
@@ -725,98 +728,35 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 				break;
 			}
 			
-			// 2) Encrypt message with CLIENT-TO-CLIENT key
-			// 2a) Generate IV
+			// 3) Encrypt message with CLIENT-TO-CLIENT key
+			// 3a) Generate IV
 			iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
 			if (!iv) {
 				throw 0;
 			}
 
-			// 2b) Encrypt message
+			// 3b) Encrypt message
 			ret = gcm_encrypt((unsigned char*)message.c_str(), message.length() + 1, iv, iv_len, clients_session_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
 			if (ret < 0) {
 				throw 1;
 			}
 
-			// 3) Prepare complete packet for server
+			// 4) Prepare complete packet for server
 			final_ciphertext_len = 1 + iv_len + ciphertext_len + tag_len;
 			final_ciphertext = (unsigned char*)malloc(final_ciphertext_len);
 			if (!final_ciphertext) {
 				throw 2;
 			}
 
-
-
-
-			size_t message_len = 2 + iv_len + (sizeof(uint32_t)) + ciphertext_len + (sizeof(uint32_t)) + tag_len + (sizeof(uint32_t));
-
-
-	// 2b) Allocate message
-	char* message = (char*)malloc(message_len);
-	if (!message) {
-		return -1;
-	}
-
-	// 2c) Initialise message
-	uint8_t* type = (uint8_t*)&message[0];
-	*type = TALKING;
-	size_t pos = 1;
-
-	
-		// a) Insert chipertext length
-		uint32_t chi_size = ciphertext_len + 1;
-		chi_size = htonl(chi_size);
-		uint32_t tag_siz = tag_len + 1;
-		tag_siz = htonl(tag_siz);
-		uint32_t iv_siz = iv_len + 1;
-		iv_siz = htonl(iv_siz);
-		memcpy(message + pos, &chi_size, sizeof(chi_size));
-		pos += sizeof(chi_size);
-
-		// b) Insert chipertext
-		memcpy(message + pos, ciphertext, ciphertext_len + 1);
-		pos += ciphertext_len + 1;
-
-		// a) Insert tag length
-		memcpy(message + pos, &tag_siz, sizeof(tag_siz));
-		pos += sizeof(tag_siz);
-
-		// b) Insert tag
-		memcpy(message + pos, tag, tag_len + 1);
-		pos += tag_len + 1;
-
-
-		// a) Insert iv length
-		
-		memcpy(message + pos, &iv_siz, sizeof(iv_siz));
-		pos += sizeof(iv_siz);
-
-		// b) Insert iv
-		memcpy(message + pos, iv, iv_len + 1);
-		pos += iv_len + 1;
-	
-
-
-
-
-
-
-
-
-
-
-
-
-
-			/*uint8_t* type = (uint8_t*)&final_ciphertext[0];
+			uint8_t* type = (uint8_t*)&final_ciphertext[0];
 			*type = TALKING;
 
 			memcpy(final_ciphertext + 1, iv, iv_len);
-			memcpy(final_ciphertext + ciphertext_len + 1, ciphertext, ciphertext_len);
-			memcpy(final_ciphertext + iv_len + ciphertext_len + 1, tag, tag_len);*/
+			memcpy(final_ciphertext + 1 + iv_len, ciphertext, ciphertext_len);
+			memcpy(final_ciphertext + 1 + iv_len + ciphertext_len, tag, tag_len);
 
-			//send it
-			int ret = send_plaintext(server_socket,(unsigned char*) message, message_len, session_key);
+			// 5) Send final packet to server
+			int ret = send_plaintext(server_socket, final_ciphertext, final_ciphertext_len, session_key);
 			if (ret <= 0) {
 				cerr << "[Thread " << this_thread::get_id() << "] send_message_to_client: "
 				<< "error send message to server" << endl;
@@ -861,8 +801,11 @@ int Client::send_end_talking_message ()
 
 int Client::receive_message_from_client(unsigned char* clients_session_key) // TODO !!! l'int restituito non puo' essere usato. Usare un altro modo per passare lo stato di uscita (parametro int& ?).
 {
+	int ret;
 	unsigned char* plaintext_from_server = nullptr;
-	size_t plaintext_from_server_len = 1;
+	size_t plaintext_from_server_len;
+	unsigned char* message = nullptr;
+	size_t message_len;
 
 	while(true) {
 		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
@@ -883,43 +826,21 @@ int Client::receive_message_from_client(unsigned char* clients_session_key) // T
 			// TODO !!! decrypt message received from peer client
 			//cout message
 
+			size_t iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
+			size_t ciphertext_len = plaintext_from_server_len - 1 - iv_len - TAG_SIZE;
+			
+			ret = gcm_decrypt(plaintext_from_server + 1 + iv_len, ciphertext_len, plaintext_from_server + 1, iv_len, plaintext_from_server + 1 + iv_len + ciphertext_len, clients_session_key, plaintext_from_server + 1, iv_len, message, message_len);
 
+			if (ret < 0) {
+				cerr << "Error: failed decryption peer client's message" << endl;
+				return -1; // .??
+			}
 
-
-
-		size_t i = 1;
-		// Extract length of username
-		uint32_t chiper_len;
-		memcpy(&chiper_len, plaintext_from_server + i, sizeof(chiper_len));
-		chiper_len = ntohl(chiper_len);
-		i += chiper_len;
-		unsigned char* ciphertext = nullptr;
-		memcpy(ciphertext, plaintext_from_server + i, chiper_len);
-		i += chiper_len;
-
-		uint32_t tag_len;
-		memcpy(&tag_len, plaintext_from_server + i, sizeof(tag_len));
-		tag_len = ntohl(tag_len);
-		i += sizeof(tag_len);
-		unsigned char* tag;
-		memcpy(&tag, plaintext_from_server + i, tag_len);
-		i += tag_len;
-
-		uint32_t iv_len;
-		memcpy(&iv_len, plaintext_from_server + i, sizeof(iv_len));
-		iv_len = ntohl(iv_len);
-		i += sizeof(iv_len);
-		unsigned char* iv;
-		memcpy(&iv, plaintext_from_server + i, iv_len);
-		i += iv_len;
-
-
-	
-
-
-
-
+			cout << endl << message << endl;
+			free(message);
 		}
+
+		free(plaintext_from_server);
 	}
 
 	return 1;
