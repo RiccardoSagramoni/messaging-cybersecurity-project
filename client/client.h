@@ -37,7 +37,7 @@ class thread_bridge {
 	string request_username = "";
 
 	mutex mx_talk_status;
-	int talk_status;
+	int talk_status = 0; // 1 if talking, 0 if not talking, -1 if an error happened during a talk
 
 public:
 	unsigned char* wait_for_new_message (size_t& msg_len);
