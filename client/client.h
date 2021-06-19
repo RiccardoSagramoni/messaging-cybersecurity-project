@@ -75,8 +75,12 @@ class Client {
 	
 	// }
 
-	// Connection between input thread and output thread
+	// Connection between input thread and output thread {
+	
 	thread_bridge bridge;
+	mutex mx_socket;
+
+	// }
 
 
 

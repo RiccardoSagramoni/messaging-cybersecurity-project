@@ -792,10 +792,11 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			}
 		
 			// 2) CHECK IF READ MESSAGE IS "EXIT FROM TALK" OR IF TALK IS CLOSING
-			if (message == "!exit" || bridge.get_talking_state() != 1) {
-				if (bridge.get_talking_state() == 1) {
-					bridge.set_talking_state(0);
-				}
+			if (bridge.get_talking_state() != 1) {
+				break;
+			}
+			else if (message == "!exit") {
+				bridge.set_talking_state(0);
 
 				ret = send_end_talking_message();
 				if (ret < 0) {
@@ -833,7 +834,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			memcpy(final_ciphertext + 1 + iv_len + ciphertext_len, tag, tag_len);
 
 			// 5) Send final packet to server
+			unique_lock<mutex> lock(mx_socket);
 			int ret = send_plaintext(server_socket, final_ciphertext, final_ciphertext_len, session_key);
+			lock.unlock();
 			if (ret <= 0) {
 				cerr << "[Thread " << this_thread::get_id() << "] send_message_to_client: "
 				<< "error send message to server" << endl;
@@ -873,6 +876,7 @@ int Client::send_end_talking_message ()
 {
 	unsigned char msg[1] = {END_TALK};
 	
+	unique_lock<mutex> lock(mx_socket);
 	return send_plaintext(server_socket, msg, 1, session_key);
 }
 
@@ -902,6 +906,9 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			return;
 		}
 
+		if (bridge.get_talking_state() != 1) {
+			break;
+		}
 
 		// Extract message type
 		uint8_t message_type = get_message_type(plaintext_from_server);
@@ -909,7 +916,8 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			free(plaintext_from_server);
 
 			bridge.set_talking_state(0);
-			
+			ret = send_end_talking_message();
+
 			break;
 		}
 		else if (message_type == SERVER_OK) {
@@ -932,7 +940,8 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			}
 
 			// Print received message
-			cout << endl << message << endl << "> "; fflush(stdout);
+			cout << endl << message << endl << "> "; 
+			fflush(stdout);
 			free(message);
 		}
 
