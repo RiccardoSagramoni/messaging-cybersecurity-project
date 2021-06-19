@@ -219,38 +219,32 @@ int Server::remove_client (const string& username)
 	// Acquire exclusive lock for writing on the client data's container
 	lock_guard<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 	
-	connection_data* client_data;
-
 	// Get client data associated with given username.
 	// Fails if there is no associated data.
-	try {
-		client_data = connected_client.at(username);
-	}
-	catch (const out_of_range& ex) {
+	auto it = connected_client.find(username);
+	if (it == connected_client.end()) {
 		return -1;
 	}
-
+	connection_data* client_data = it->second;
+	
 	// Bruteforce close the socket
 	if (shutdown(client_data->socket, SHUT_RDWR) >= 0) {
 		close(client_data->socket);
 	}
-
+	
 	// Remove key
 	#pragma optimize("", off)
 		memset((void*) client_data->key, 0, client_data->key_len);
 	#pragma optimize("", on)
 	free((void*) client_data->key);
-
+	
 	// Remove client data
-	auto it = connected_client.find(username);
-	if (it != connected_client.end()) {
-		delete it->second;
-		connected_client.erase(it);
-	}
-
+	delete client_data;
+	connected_client.erase(it);
+	
 	cout << "[Thread " << this_thread::get_id() << "]: "
 	<< "user " << username << " exits" << endl;
-
+	
 	return 1;
 }
 
