@@ -2124,8 +2124,6 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 		// 3) Check type of message
 		uint8_t* type_ptr = (uint8_t*)msg;
 		if (*type_ptr != TALKING) {
-			free(msg);
-
 			// Send closing message to dest
 			unsigned char closing_msg[1]= {SERVER_END_TALK};
 			send_plaintext(dest_socket, closing_msg, 1, dest_key);
@@ -2140,6 +2138,8 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 				cerr << "[Thread " << this_thread::get_id() << "] talk: "
 				<< "received wrong message type" << endl;
 			}
+
+			free(msg);
 			
 			return;
 		}

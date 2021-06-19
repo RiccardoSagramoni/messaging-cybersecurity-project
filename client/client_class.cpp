@@ -289,7 +289,7 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 			if (command == "yes") {
 				cout << "Request from " << username_requesting_talk << " accepted" << endl;
 
-				ret = accept_request_to_talk(session_key, username_requesting_talk);
+				ret = accept_request_to_talk(username_requesting_talk);
 				if (ret != 1) {
 					cerr << "accept request error" << endl;
 					break;
@@ -298,7 +298,7 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 			else {
 				cout << "Request from " << username_requesting_talk << " refused" << endl;
 
-				ret = reject_request_to_talk(session_key, username_requesting_talk);
+				ret = reject_request_to_talk(username_requesting_talk);
 				if (ret != 1) {
 					cerr << "reject request error" << endl;
 					break;
@@ -313,7 +313,11 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 }
 
 
-//for send a request to talk to another client
+/**
+ * Send a request to talk to another client
+ * 
+ * @return 1 on success, -1 on failure
+ */
 int Client::talk () 
 {
 	int ret = 0;
@@ -351,17 +355,17 @@ int Client::talk ()
 	memcpy(message + 1 + sizeof(string_size), peer_username.c_str(), peer_username.length() + 1);
 
 	try {
-		// send messsage to server
+		// Send messsage to server
 		ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
+		free(message);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "erro send message to server" << endl;
 			throw 0;
 		}
-
-		free(message);
-
+		
 		plaintext = bridge.wait_for_new_message(plaintext_len);
+
 	} catch (int e) {
 		if (e >= 1) {
 			free(plaintext);
@@ -371,27 +375,39 @@ int Client::talk ()
 
 	// Extract message type
 	uint8_t message_type = get_message_type(plaintext);
+	free(plaintext);
+
 	if (message_type == SERVER_ERR) {
-		cout<<"client has refused the rhe request"<<endl;
+		cout << "User " << peer_username << " has refused your request" << endl;
 		return 1;
 	}
 	else if (message_type == SERVER_OK) {
-		free(plaintext);
-		// DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
+		// 1) DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
 		unsigned char* clients_session_key = nullptr;
 		size_t clients_session_key_lenght = 0;
-		ret = negotiate_key_with_client(clients_session_key, clients_session_key_lenght);
+
+		ret = negotiate_key_with_client_as_master(clients_session_key, clients_session_key_lenght);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "negotiation key failed" << endl;
 			return -1;
 		}
-		thread t2(&Client::receive_message_from_client, this, clients_session_key);
+
+		// 2) Create new thread
+		int return_value;
+		bridge.set_talking_state(1);
+		thread receive_thread(&Client::receive_message_from_client, this, clients_session_key, &return_value);
 		send_message_to_client(clients_session_key);
+		receive_thread.join();
+
 		secure_free(clients_session_key, clients_session_key_lenght);
+
+		if (return_value != 1 || bridge.get_talking_state() == -1) {
+			return -1;
+		}
 	}
 	else {
-		cerr << "[Thread " << this_thread::get_id() << "] talk: "
+		cerr << "Error talk(): "
 		<< "request to talk failed" << endl;
 		return -1;
 	}
@@ -399,7 +415,7 @@ int Client::talk ()
 }
 
 // DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
-int Client::negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len)
+int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len)
 {
 	int ret;
 	EVP_PKEY* my_dh_key;
@@ -452,13 +468,7 @@ int Client::negotiate_key_with_client (unsigned char*& clients_session_key, size
 		}
 
 
-		//receive g^b and deserialize it
-		/*ret = receive_plaintext(server_socket, key, key_len, session_key);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error receive client key" << endl;
-			throw 3;
-		}*/
+		// Receive g^b and deserialize it
 		key = bridge.wait_for_new_message(key_len);
 		
 		mem_bio = BIO_new(BIO_s_mem());
@@ -522,176 +532,235 @@ int Client::negotiate_key_with_client (unsigned char*& clients_session_key, size
 }
 
 
+/**
+ * // TODO
+ * @param clients_session_key 
+ * @param clients_session_key_len 
+ * 
+ * @return 1 on success, -1 on failure 
+ */
+int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len)
+{
+	int ret;
+	
+	BIO* my_bio = nullptr;
+	BIO* peer_bio = nullptr;
 
-
-//accept request to talk from another client
-int Client::accept_request_to_talk(unsigned char* server_session_key, string peer_username) {
-	char* message = nullptr;
-	size_t message_len = 1;
-	int ret = 0;
-	//store username_lenght
-	message_len += sizeof(uint32_t) + peer_username.length() + 1;
-	//allocate msg
-	message = (char*)malloc(message_len);
-	if (!message) {
-		return -1;
-	}
-	//craft msg for response (accept || lenght username client sender || username client sender)
-	uint8_t* type = (uint8_t*)&message[0];
-	*type = ACCEPT_TALK;
-	//insert username length
-	uint32_t string_size = strlen(peer_username.c_str()) + 1;
-	string_size = htonl(string_size);
-	memcpy(message + 1, &string_size, sizeof(string_size));
-	//insert username
-	memcpy(message + 5, peer_username.c_str(), peer_username.length() + 1);
-	if (!message) {
-		return -1;
-	}
-	try {
-		//send message to server for accepting
-		ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
-			<< "error send message to server for accept" << endl;
-			throw 1;
-		} 
-	}	catch (int e) {
-			if (e >= 1) {
-				free(message);
-			}
-			return -1;
-	}
-	free(message);
-
-	//craft and send g**b
-	//generate g^b
-	EVP_PKEY* my_dh_key = generate_key_dh();
-	if (!my_dh_key) {
-		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
-		<< "error generate key" << endl;
-		return -1;
-	}
-
-
-
-	BIO* mbio = nullptr;
-	char* pubkey_buf = nullptr;
-	uint32_t pubkey_size = 0;
-	BIO* mem_bio = nullptr;
-	unsigned char* key = nullptr;
+	EVP_PKEY* my_dh_key = nullptr;
+	char* my_dh_key_buf = nullptr;
+	size_t my_dh_key_len = 0;
+	
 	EVP_PKEY* peer_key = nullptr;
-	size_t key_len = 0;
-	unsigned char* clients_session_key = nullptr;
-	size_t clients_session_key_lenght = 0;
+	unsigned char* peer_key_buf = nullptr;
+	size_t peer_key_len = 0;
+
 	try {
-		//serialize my_dh_key
-		mbio = BIO_new(BIO_s_mem());
-		if (!mbio) {
+		// 1) Generate g**b
+		my_dh_key = generate_key_dh();
+		if (!my_dh_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
+			<< "error generate key" << endl;
+			throw 0;
+		}
+
+		// 2) Serialize g**b
+		// 2a) Allocate bio
+		my_bio = BIO_new(BIO_s_mem());
+		if (!my_bio) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 			<< "error bio_new" << endl;
 			throw 1;
 		}
 
-		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
+		// 2b) Write on bio
+		ret = PEM_write_bio_PUBKEY(my_bio, my_dh_key);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 			<< "error write bio" << endl;
-			throw 1;
+			throw 2;
 		}
 		
-		long ret_long = BIO_get_mem_data(mbio, &pubkey_buf);
+		// 2c) Read from bio
+		long ret_long = BIO_get_mem_data(my_bio, &my_dh_key_buf);
 		if (ret_long <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 			<< "error get mem bio pub key" << endl;
-			throw 1;
-		}
-		pubkey_size = (uint32_t)ret_long;
-
-
-		//receive g^a and deserialize it
-		/*ret = receive_plaintext(server_socket, key, key_len, session_key);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
-			<< "error receive client key" << endl;
 			throw 2;
-		}*/
-		key = bridge.wait_for_new_message(key_len);
-		
-		mem_bio = BIO_new(BIO_s_mem());
-		if (!mem_bio) {
+		}
+		my_dh_key_len = ret_long;
+
+
+		// 3) Receive g**a and deserialize it
+		peer_key_buf = bridge.wait_for_new_message(peer_key_len);
+		if (!peer_key_buf) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
-			<< "error bio_new" << endl;
+			<< "wait_for_new_message failed" << endl;
 			throw 3;
 		}
 		
-		ret = BIO_write(mem_bio, key, key_len);
+		// 3a) Allocate bio
+		peer_bio = BIO_new(BIO_s_mem());
+		if (!peer_bio) {
+			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
+			<< "error bio_new" << endl;
+			throw 4;
+		}
+		
+		// 3b) Insert serialized key in bio
+		ret = BIO_write(peer_bio, peer_key_buf, peer_key_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 			<< "error bio_write" << endl;
-			throw 3;
+			throw 5;
 		}
-		peer_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
+
+		// 3c) Deserialize g**a
+		peer_key = PEM_read_bio_PUBKEY(peer_bio, nullptr, nullptr, nullptr);
 		if (!peer_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 			<< "error pem read" << endl;
-			throw 3;
-		}
-
-
-		//send g^a
-		ret = send_plaintext(server_socket, (unsigned char*)pubkey_buf, pubkey_size, session_key);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
-			<< "error sending pub key" << endl;
-			throw 4;
-		}
-
-		//get session key for clients comunications
-		clients_session_key_lenght = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
-		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_lenght);
-		if (!clients_session_key) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error derive session key" << endl;
 			throw 5;
 		}
 
 
-		
+		// 4) Send serialized g**b
+		ret = send_plaintext(server_socket, (unsigned char*)my_dh_key_buf, my_dh_key_len, session_key);
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
+			<< "error sending pub key" << endl;
+			throw 6;
+		}
 
+		// 5) Derive session key for messages between client
+		clients_session_key_len = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
+		clients_session_key = derive_session_key(my_dh_key, peer_key, clients_session_key_len);
+		if (!clients_session_key) {
+			cerr << "[Thread " << this_thread::get_id() << "] talk: "
+			<< "error derive session key" << endl;
+			throw 6;
+		}
 
-	}catch (int e) {
+	} catch (int e) {
+		if (e >= 6) {
+			EVP_PKEY_free(peer_key);
+		}
 		if (e >= 5) {
-			secure_free(clients_session_key, clients_session_key_lenght);
+			BIO_free(peer_bio);
 		}
 		if (e >= 4) {
-			secure_free(pubkey_buf, pubkey_size);
+			secure_free(peer_key_buf, peer_key_len);
 		}
 		if (e >= 3) {
-			BIO_free(mem_bio);
+			secure_free(my_dh_key_buf, my_dh_key_len);
 		}
 		if (e >= 2) {
-			
-			secure_free(key, key_len);
+			BIO_free(my_bio);
 		}
 		if (e >= 1) {
-			BIO_free(mbio);
+			EVP_PKEY_free(my_dh_key);
 		}
 		return -1;
 	}
-	BIO_free(mem_bio);
-	secure_free(key, key_len);
-	secure_free(pubkey_buf, pubkey_size);
-	BIO_free(mbio);
 
-	thread t3(&Client::receive_message_from_client, this, clients_session_key);
-	send_message_to_client(clients_session_key);
+	EVP_PKEY_free(peer_key);
+	BIO_free(peer_bio);
+	secure_free(peer_key_buf, peer_key_len);
+	secure_free(my_dh_key_buf, my_dh_key_len);
+	BIO_free(my_bio);
+	EVP_PKEY_free(my_dh_key);
 
-
-	secure_free(clients_session_key, clients_session_key_lenght);
 	return 1;
 }
 
+
+/**
+ * Accept request to talk from another client
+ * 
+ * @param peer_username username of the client who sent the request
+ * 
+ * @return 1 on success, -1 on failure 
+ */
+int Client::accept_request_to_talk(string peer_username) 
+{
+	int ret;
+
+	// 1a) Generate length of the message
+	size_t message_len = 1 + sizeof(uint32_t) + peer_username.length() + 1;
+	
+	// 1b) Allocate message to send
+	char* message = (char*)malloc(message_len);
+	if (!message) {
+		return -1;
+	}
+
+	// 2) Craft msg for response 
+	// (accept flag || lenght of requesting client's username || requesting client's username)
+	uint8_t* type = (uint8_t*)&message[0];
+	*type = ACCEPT_TALK;
+
+	// 2a) Insert username length
+	uint32_t username_len = peer_username.length() + 1;
+	username_len = htonl(username_len);
+	memcpy(message + 1, &username_len, sizeof(username_len));
+
+	// 2b) Insert username
+	memcpy(message + 1 + sizeof(username_len), peer_username.c_str(), peer_username.length() + 1);
+	
+	// 3) Send message to server for notify accepting the request
+	ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
+	free(message);
+	if (ret <= 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
+		<< "error send message to server for accept" << endl;
+		return -1;
+	}
+
+	// 4) Negotiate a symmetric key with the other client, using the DH protocol.
+	// It must assume a passive (slave) role in the protocol execution
+	unsigned char* clients_session_key = nullptr;
+	size_t clients_session_key_len = 0;
+	ret = negotiate_key_with_client_as_slave(clients_session_key, clients_session_key_len);
+	if (!ret) {
+		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
+		<< "negotiate_key_with_client_as_slave failed" << endl;
+		return -1;
+	}
+
+	// 5) Set the internal state as "talking"
+	bridge.set_talking_state(1);
+	int return_value;
+
+	// 6) Start chat: create a new thread which will receive the message 
+	// sent by the other client and will print them on the standard output.
+	// The current thread will read messages from the standard input and
+	// sent them to the other client.
+	// The message !exit will terminate the talk
+	cout << "START CHAT" << endl;
+
+	thread receive_thread(&Client::receive_message_from_client, this, 
+	                      clients_session_key, &return_value);
+	send_message_to_client(clients_session_key);
+
+	receive_thread.join();
+
+	cout << "END CHAT" << endl;
+	secure_free(clients_session_key, clients_session_key_len);
+
+	// 7) Check if the talk failed
+	if (return_value != 1 || bridge.get_talking_state() == -1) {
+		return -1;
+	}
+
+	return 1;
+}
+
+/**
+ * Send chat messages to the peer client in a "talk" conversation
+ * 
+ * @param clients_session_key symmetric key client-to-client
+ * 
+ * @return 1 if the talk ended properly, -1 if any failure occurs 
+ */
 int Client::send_message_to_client(unsigned char* clients_session_key) 
 {
 	int ret;
@@ -708,26 +777,34 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 	unsigned char* final_ciphertext = nullptr;
 	size_t final_ciphertext_len = 0;
 
-	cout << "START CHAT" << endl;
+	// Clean standard input
+	cin.clear();
+	cin.ignore(numeric_limits<streamsize>::max(), '\n');
+	cout << "> ";
 
 	while (true) {
 		try {
 			// 1) GET MESSAGE FROM STANDARD INPUT
+			
 			getline(cin, message);
 			if (cin.rdstate() && !cin.good()) {
-				throw 0;
-			}
-		
-			// 2) CHECK IF READ MESSAGE IS "EXIT FROM TALK"
-			if (message == "!exit") {
-				ret = send_end_talking_message();
-				if (ret < 0) {
-					return -1; // FAILURE!
-				}
-				// TODO synchronize with the other thread
 				break;
 			}
-			
+		
+			// 2) CHECK IF READ MESSAGE IS "EXIT FROM TALK" OR IF TALK IS CLOSING
+			if (message == "!exit" || bridge.get_talking_state() != 1) {
+				if (bridge.get_talking_state() == 1) {
+					bridge.set_talking_state(0);
+				}
+
+				ret = send_end_talking_message();
+				if (ret < 0) {
+					return -1; // TODO FAILURE!
+				}
+								
+				break;
+			}
+
 			// 3) Encrypt message with CLIENT-TO-CLIENT key
 			// 3a) Generate IV
 			iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
@@ -763,6 +840,8 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 				throw 3;
 			}
 
+			cout << "> ";
+
 		} catch (int e) {
 			if (e >= 3) {
 				secure_free(final_ciphertext, final_ciphertext_len);
@@ -775,9 +854,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 				secure_free(iv, iv_len);
 			}
 
-			// TODO !!! FAILURE.
-			// TODO !!! syncronization btw threads for exit talk
-			
+			shutdown(server_socket, SHUT_RDWR);
+			bridge.set_talking_state(-1);
+
 			return -1;
 		}
 		
@@ -792,14 +871,19 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 
 int Client::send_end_talking_message ()
 {
-	unsigned char msg[] = {END_TALK};
+	unsigned char msg[1] = {END_TALK};
 	
 	return send_plaintext(server_socket, msg, 1, session_key);
 }
 
 
-
-int Client::receive_message_from_client(unsigned char* clients_session_key) // TODO !!! l'int restituito non puo' essere usato. Usare un altro modo per passare lo stato di uscita (parametro int& ?).
+/**
+ * Receive and decrypt messages sent from the peer client in a "talk" conversation.
+ * 
+ * @param clients_session_key symmetric key client-to-client
+ * @param return_value it will contain the exit value of this function: 1 if the talk was ended properly, 0 if there was a problem with the decryption of client's messages, -1 for any other errors
+ */
+void Client::receive_message_from_client(unsigned char* clients_session_key, int* return_value)
 {
 	int ret;
 	unsigned char* plaintext_from_server = nullptr;
@@ -810,22 +894,26 @@ int Client::receive_message_from_client(unsigned char* clients_session_key) // T
 	while(true) {
 		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
 		if (!plaintext_from_server) {
-			// TODO cerr
-			return -1;
+			cerr << "Error: receive_message_from_client failed" << endl;
+			shutdown(server_socket, SHUT_RDWR);
+			bridge.set_talking_state(-1);
+
+			*return_value = -1;
+			return;
 		}
+
 
 		// Extract message type
 		uint8_t message_type = get_message_type(plaintext_from_server);
 		if (message_type == SERVER_END_TALK) {
-			// TODO !!! syncronize with the other thread
-			cout << "End chat" << endl;
 			free(plaintext_from_server);
-			return -1;
+
+			bridge.set_talking_state(0);
+			
+			break;
 		}
 		else if (message_type == SERVER_OK) {
-			// TODO !!! decrypt message received from peer client
-			//cout message
-
+			// Decrypt message received
 			size_t iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
 			size_t ciphertext_len = plaintext_from_server_len - 1 - iv_len - TAG_SIZE;
 			
@@ -833,25 +921,33 @@ int Client::receive_message_from_client(unsigned char* clients_session_key) // T
 
 			if (ret < 0) {
 				cerr << "Error: failed decryption peer client's message" << endl;
-				return -1; // .??
+				*return_value = 0;
+				free(plaintext_from_server);
+
+				// Notify hard failure to the sending thread
+				shutdown(server_socket, SHUT_RDWR);
+				bridge.set_talking_state(-1);
+
+				return; 
 			}
 
-			cout << endl << message << endl;
+			// Print received message
+			cout << endl << message << endl << "> "; fflush(stdout);
 			free(message);
 		}
 
 		free(plaintext_from_server);
 	}
 
-	return 1;
+	*return_value = 1;
+	return;
 }
 
 
 
 
-
-
-int Client::reject_request_to_talk(unsigned char* server_session_key, string peer_username) {
+int Client::reject_request_to_talk (string peer_username) 
+{
 	// Prepare request for show 
 	char message[1] = {REFUSE_TALK};
 	// Send message to server
@@ -863,13 +959,6 @@ int Client::reject_request_to_talk(unsigned char* server_session_key, string pee
 	}
 	return 1;
 }
-
-
-
-
-
-
-
 
 
 
@@ -2577,7 +2666,9 @@ void Client::input_slave_thread ()
 		// Receive message from server
 		ret = receive_plaintext(server_socket, msg, msg_len, session_key);
 		if (ret != 1) {
-			// TODO
+			cerr << "Error: receive_plaintext failed" << endl;
+			// We notify that there was an error so that the paused thread on the mutex can restart
+			bridge.notify_new_message(nullptr, 0); 
 			return;
 		}
 

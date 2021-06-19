@@ -36,11 +36,16 @@ class thread_bridge {
 	bool has_received_request = false;
 	string request_username = "";
 
+	mutex mx_talk_status;
+	int talk_status;
+
 public:
 	unsigned char* wait_for_new_message (size_t& msg_len);
 	void notify_new_message(unsigned char* msg, size_t msg_len);
 	int check_request_talk(string& peer_username);
 	void add_request_talk(const string& peer_username);
+	int get_talking_state();
+	void set_talking_state(int status);
 };
 
 
@@ -133,10 +138,11 @@ class Client {
 	int exit_by_application();
 	int send_message_to_client(unsigned char* clients_session_key);
 	int send_end_talking_message();
-	int receive_message_from_client(unsigned char* clients_session_key);
-	int negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len);
-	int accept_request_to_talk(unsigned char* server_session_key, string peer_username);
-	int reject_request_to_talk(unsigned char* server_session_key, string peer_username);
+	void receive_message_from_client(unsigned char* clients_session_key, int* return_value);
+	int negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int accept_request_to_talk(string peer_username);
+	int reject_request_to_talk(string peer_username);
 
 	void input_slave_thread ();
 

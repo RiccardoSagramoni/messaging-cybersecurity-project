@@ -74,3 +74,15 @@ void thread_bridge::add_request_talk(const string& peer_username)
 	has_received_request = true;
 	request_username = peer_username;
 }
+
+int thread_bridge::get_talking_state()
+{
+	unique_lock<mutex> lock(mx_talk_status);
+	return talk_status;
+}
+
+void thread_bridge::set_talking_state (int status)
+{
+	unique_lock<mutex> lock(mx_talk_status);
+	talk_status = status;
+}
