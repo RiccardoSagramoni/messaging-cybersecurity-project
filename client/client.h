@@ -37,15 +37,19 @@ class thread_bridge {
 	string request_username = "";
 
 	mutex mx_talk_status;
-	int talk_status = 0; // 1 if talking, 0 if not talking, -1 if an error happened during a talk
+	// See macro for possible values
+	int talk_status = 0;
 
 public:
+	~thread_bridge ();
 	unsigned char* wait_for_new_message (size_t& msg_len);
 	void notify_new_message(unsigned char* msg, size_t msg_len);
 	int check_request_talk(string& peer_username);
 	void add_request_talk(const string& peer_username);
 	int get_talking_state();
 	void set_talking_state(int status);
+
+	void force_free_slave_input_thread ();
 };
 
 
@@ -209,6 +213,13 @@ public:
 
 	#define 	ERR_GENERIC				0xFF
 
+// }
+
+// Status talking {
+	#define		STATUS_TALKING_YES		 2
+	#define 	STATUS_TALKING_CLOSING	 1
+	#define 	STATUS_TALKING_NO		 0
+	#define 	STATUS_TALKING_ERR		-1
 // }
 
 

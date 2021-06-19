@@ -1,5 +1,13 @@
 #include "client.h"
 
+thread_bridge::~thread_bridge()
+{
+	if (new_msg) {
+		free(new_msg);
+		new_msg = nullptr;
+	}
+}
+
 /**
  * Wait for a new message from a server
  * 
@@ -21,6 +29,21 @@ unsigned char* thread_bridge::wait_for_new_message (size_t& msg_len)
 
 	cv_new_msg.notify_all();
 	return msg;
+}
+
+/**
+ * Delete last received
+ */
+void thread_bridge::force_free_slave_input_thread()
+{
+	unique_lock<mutex> lock(mx_new_msg);
+	if (is_msg_ready) {
+		free(new_msg);
+		new_msg = nullptr;
+		new_msg_len = 0;
+		is_msg_ready = false;
+		cv_new_msg.notify_all();
+	}
 }
 
 /**

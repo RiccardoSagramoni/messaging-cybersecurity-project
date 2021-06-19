@@ -231,11 +231,15 @@ void Client::run()
 	}
 
 	// Start the thread which will receive all the message from the server
-	thread t1(&Client::input_slave_thread, this);
+	thread t(&Client::input_slave_thread, this);
 
 	execute_user_commands();
 	// TODO handle failure (close socket!!!!)
 	// TODO close the other thread
+	shutdown(server_socket, SHUT_RDWR);
+	t.join();
+	close(server_socket);
+	return;
 }
 
 /**
@@ -257,29 +261,21 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 		if (command == "0") {
 			ret = talk();
 			if (ret < 0) {
-				cout<<"error talk()"<<endl;
+				cerr << "Error: talk() failed" << endl;
 				break;
-			}
-			if (ret == 0) {
-				cout<<"no user with this name"<<endl;
-				continue;
 			}
 		}
 		else if (command == "1") {
 			ret = show();
 			if (ret < 0) {
-				cout<<"error show()"<<endl;
+				cout << "Error: show() failed" << endl;
 				break;
-			}
-			if (ret == 0) {
-				cout<<"other errors"<<endl; //TODO
-				continue;
 			}
 		}
 		else if (command == "2") {
 			ret = exit_by_application();
 			if (ret != 1) {
-				cout << "error exit_by_application()" << endl;
+				cerr << "Error: exit_by_application()" << endl;
 				break;
 			}
 			cout << "Bye!!" << endl;
@@ -306,7 +302,7 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 			}
 		}
 		else {
-			cout << "Error: wrong command" << endl;
+			cout << "Error: wrong command" << endl << endl;
 			continue;
 		}
 	}
@@ -334,6 +330,8 @@ int Client::talk ()
 		return -1;
 	}
 
+	cout << "Waiting " << peer_username << " answer..." << endl;
+
 	//store username_lenght
 	message_len += sizeof(uint32_t) + peer_username.length() + 1;
 	//allocate msg
@@ -351,16 +349,16 @@ int Client::talk ()
 	string_size = htonl(string_size);
 	memcpy(message + 1, &string_size, sizeof(string_size));
 
-	// insert username
+	// Insert username
 	memcpy(message + 1 + sizeof(string_size), peer_username.c_str(), peer_username.length() + 1);
 
 	try {
-		// Send messsage to server
+		// Send message to server
 		ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 		free(message);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "erro send message to server" << endl;
+			<< "error send message to server" << endl;
 			throw 0;
 		}
 		
@@ -393,16 +391,21 @@ int Client::talk ()
 			return -1;
 		}
 
-		// 2) Create new thread
+		// 2) Create new thread and start talking
 		int return_value;
-		bridge.set_talking_state(1);
+		bridge.set_talking_state(STATUS_TALKING_YES);
+
 		thread receive_thread(&Client::receive_message_from_client, this, clients_session_key, &return_value);
 		send_message_to_client(clients_session_key);
 		receive_thread.join();
 
 		secure_free(clients_session_key, clients_session_key_lenght);
 
-		if (return_value != 1 || bridge.get_talking_state() == -1) {
+		// 3) Check exit status
+		int status = bridge.get_talking_state();
+		bridge.set_talking_state(STATUS_TALKING_NO);
+
+		if (return_value != 1 || status == STATUS_TALKING_ERR) {
 			return -1;
 		}
 	}
@@ -524,7 +527,6 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 	BIO_free(mem_bio);
 	secure_free(key, key_len);
-	secure_free(pubkey_buf, pubkey_size);
 	BIO_free(mbio);
 	EVP_PKEY_free(my_dh_key);
 
@@ -727,7 +729,7 @@ int Client::accept_request_to_talk(string peer_username)
 	}
 
 	// 5) Set the internal state as "talking"
-	bridge.set_talking_state(1);
+	bridge.set_talking_state(STATUS_TALKING_YES);
 	int return_value;
 
 	// 6) Start chat: create a new thread which will receive the message 
@@ -747,7 +749,9 @@ int Client::accept_request_to_talk(string peer_username)
 	secure_free(clients_session_key, clients_session_key_len);
 
 	// 7) Check if the talk failed
-	if (return_value != 1 || bridge.get_talking_state() == -1) {
+	int status = bridge.get_talking_state();
+	bridge.set_talking_state(STATUS_TALKING_NO);
+	if (return_value != 1 || status == STATUS_TALKING_ERR) {
 		return -1;
 	}
 
@@ -792,11 +796,11 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			}
 		
 			// 2) CHECK IF READ MESSAGE IS "EXIT FROM TALK" OR IF TALK IS CLOSING
-			if (bridge.get_talking_state() != 1) {
+			if (bridge.get_talking_state() != STATUS_TALKING_YES) {
 				break;
 			}
 			else if (message == "!exit") {
-				bridge.set_talking_state(0);
+				bridge.set_talking_state(STATUS_TALKING_CLOSING);
 
 				ret = send_end_talking_message();
 				if (ret < 0) {
@@ -858,7 +862,7 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			}
 
 			shutdown(server_socket, SHUT_RDWR);
-			bridge.set_talking_state(-1);
+			bridge.set_talking_state(STATUS_TALKING_ERR);
 
 			return -1;
 		}
@@ -900,13 +904,13 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 		if (!plaintext_from_server) {
 			cerr << "Error: receive_message_from_client failed" << endl;
 			shutdown(server_socket, SHUT_RDWR);
-			bridge.set_talking_state(-1);
+			bridge.set_talking_state(STATUS_TALKING_ERR);
 
 			*return_value = -1;
 			return;
 		}
 
-		if (bridge.get_talking_state() != 1) {
+		if (bridge.get_talking_state() != STATUS_TALKING_YES) {
 			break;
 		}
 
@@ -915,7 +919,7 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 		if (message_type == SERVER_END_TALK) {
 			free(plaintext_from_server);
 
-			bridge.set_talking_state(0);
+			bridge.set_talking_state(STATUS_TALKING_CLOSING);
 			ret = send_end_talking_message();
 
 			break;
@@ -934,7 +938,7 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 
 				// Notify hard failure to the sending thread
 				shutdown(server_socket, SHUT_RDWR);
-				bridge.set_talking_state(-1);
+				bridge.set_talking_state(STATUS_TALKING_ERR);
 
 				return; 
 			}
@@ -1107,12 +1111,17 @@ int Client::show()
 	return 1;
 }
 
+/**
+ * Execute "exit" command
+ * 
+ * @return 1 on success, -1 on failure 
+ */
 int Client::exit_by_application() 
 { // TODO here!
 	//Allocate message
 	char message[1] = {TYPE_EXIT};
 
-	//send message to server
+	// Send message to server
 	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, session_key);
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] exit_by_application: "
@@ -2676,8 +2685,11 @@ void Client::input_slave_thread ()
 		ret = receive_plaintext(server_socket, msg, msg_len, session_key);
 		if (ret != 1) {
 			cerr << "Error: receive_plaintext failed" << endl;
+			
 			// We notify that there was an error so that the paused thread on the mutex can restart
-			bridge.notify_new_message(nullptr, 0); 
+			if (bridge.get_talking_state() != STATUS_TALKING_NO) {
+				bridge.notify_new_message(nullptr, 0); 
+			}
 			return;
 		}
 
