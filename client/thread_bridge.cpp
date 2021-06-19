@@ -32,7 +32,7 @@ unsigned char* thread_bridge::wait_for_new_message (size_t& msg_len)
 }
 
 /**
- * Delete last received
+ * Delete last received message
  */
 void thread_bridge::force_free_slave_input_thread()
 {

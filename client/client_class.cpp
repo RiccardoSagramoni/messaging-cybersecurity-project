@@ -234,11 +234,16 @@ void Client::run()
 	thread t(&Client::input_slave_thread, this);
 
 	execute_user_commands();
-	// TODO handle failure (close socket!!!!)
-	// TODO close the other thread
+	
+	// Close other thread
 	shutdown(server_socket, SHUT_RDWR);
+
+	bridge.force_free_slave_input_thread();
 	t.join();
+	bridge.force_free_slave_input_thread();
+
 	close(server_socket);
+	
 	return;
 }
 
@@ -376,7 +381,7 @@ int Client::talk ()
 	free(plaintext);
 
 	if (message_type == SERVER_ERR) {
-		cout << "User " << peer_username << " has refused your request" << endl;
+		cout << "User " << peer_username << " has refused your request" << endl << endl;
 		return 1;
 	}
 	else if (message_type == SERVER_OK) {
@@ -467,7 +472,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error sending pub key" << endl;
-			throw 3;
+			throw 2;
 		}
 
 
@@ -502,19 +507,19 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		if (!clients_session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] talk: "
 			<< "error derive session key" << endl;
-			throw 5;
+			throw 6;
 		}
 		
 
 	} catch (int e) {
+		if (e >= 6) {
+			EVP_PKEY_free(peer_key);
+		}
 		if (e >= 5) {
 			BIO_free(mem_bio);
 		}
 		if (e >= 4) {
 			secure_free(key, key_len);
-		}
-		if (e >= 3) {
-			secure_free(pubkey_buf, pubkey_size);
 		}
 		if (e >= 2) {
 			BIO_free(mbio);
@@ -525,6 +530,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		return -1;
 	}
 
+	EVP_PKEY_free(peer_key);
 	BIO_free(mem_bio);
 	secure_free(key, key_len);
 	BIO_free(mbio);
@@ -597,7 +603,7 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		if (!peer_key_buf) {
 			cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 			<< "wait_for_new_message failed" << endl;
-			throw 3;
+			throw 2;
 		}
 		
 		// 3a) Allocate bio
@@ -652,9 +658,6 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		if (e >= 4) {
 			secure_free(peer_key_buf, peer_key_len);
 		}
-		if (e >= 3) {
-			secure_free(my_dh_key_buf, my_dh_key_len);
-		}
 		if (e >= 2) {
 			BIO_free(my_bio);
 		}
@@ -667,7 +670,6 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	EVP_PKEY_free(peer_key);
 	BIO_free(peer_bio);
 	secure_free(peer_key_buf, peer_key_len);
-	secure_free(my_dh_key_buf, my_dh_key_len);
 	BIO_free(my_bio);
 	EVP_PKEY_free(my_dh_key);
 
@@ -1435,10 +1437,10 @@ EVP_PKEY* Client::generate_key_dh ()
 		if (ret != 1) throw 2;
 
 	} catch (int e) {
-		if (e == 2) {
+		if (e >= 2) {
 			EVP_PKEY_CTX_free(dh_gen_ctx);
 		}
-		if (e == 1) {
+		if (e >= 1) {
 			EVP_PKEY_free(dh_params);
 		}
 
@@ -1446,6 +1448,7 @@ EVP_PKEY* Client::generate_key_dh ()
 	}
 
 	EVP_PKEY_CTX_free(dh_gen_ctx);
+	EVP_PKEY_free(dh_params);
 	return dh_key;
 }
 
@@ -1776,56 +1779,57 @@ int Client::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext
 
 
 
-//for verify server signature
+/**
+ * Verify if the received signature has been signed by the server
+ * 
+ * @param signature signature to verify
+ * @param signature_len length of the signature
+ * @param cleartext plaintext that was signed
+ * @param cleartext_len length of plaintext
+ * @param server_pubkey server's public key
+ * 
+ * @return 1 on success, -1 on failure
+ */
 int Client::verify_server_signature (unsigned char* signature, size_t signature_len, 
-										   unsigned char* cleartext, size_t cleartext_len, 
-										   EVP_PKEY* server_pubkey)
+									unsigned char* cleartext, size_t cleartext_len, 
+									EVP_PKEY* server_pubkey)
 {
-	EVP_MD_CTX* ctx = nullptr;
-
 	int ret;
-	int return_value = -1;
 	
-	try {
-
-		// 2) Verify signature
-		ctx = EVP_MD_CTX_new();
-		if (!ctx) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
-			<< "EVP_MD_CTX_new returned NULL" << endl;
-			throw 1;
-		}
-
-		ret = EVP_VerifyInit(ctx, EVP_sha256());
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
-			<< "EVP_VerifyInit returned " << ret << endl;
-			throw 2;
-		}
-
-		ret = EVP_VerifyUpdate(ctx, cleartext, cleartext_len);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
-			<< "EVP_VerifyUpdate returned " << ret << endl;
-			throw 2;
-		}
-
-		ret = EVP_VerifyFinal(ctx, signature, signature_len, server_pubkey);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
-			<< "EVP_VerifyFinal returned " << ret << endl;
-			throw 2;
-		}
-
-	} catch (int e) {
-		if (e >= 2) {
-			EVP_MD_CTX_free(ctx);
-		}
-		if (e >= 1) {
-			EVP_PKEY_free(server_pubkey);
-		}
-		return return_value;
+	// Create context for verifying signature
+	EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+	if (!ctx) {
+		cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
+		<< "EVP_MD_CTX_new returned NULL" << endl;
+		return -1;
 	}
+
+	ret = EVP_VerifyInit(ctx, EVP_sha256());
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
+		<< "EVP_VerifyInit returned " << ret << endl;
+		EVP_MD_CTX_free(ctx);
+		return -1;
+	}
+
+	ret = EVP_VerifyUpdate(ctx, cleartext, cleartext_len);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
+		<< "EVP_VerifyUpdate returned " << ret << endl;
+		EVP_MD_CTX_free(ctx);
+		return -1;
+	}
+
+	// Verify signature
+	ret = EVP_VerifyFinal(ctx, signature, signature_len, server_pubkey);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] verify_server_signature: "
+		<< "EVP_VerifyFinal returned " << ret << endl;
+		EVP_MD_CTX_free(ctx);
+		return -1;
+	}
+
+	EVP_MD_CTX_free(ctx);
 
 	return 1;
 }
@@ -1833,7 +1837,7 @@ int Client::verify_server_signature (unsigned char* signature, size_t signature_
 
 
 
-// for encrypt and send sign
+// Encrypt and send sign
 int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len) {
 	int ret;
 	long ret_long;
@@ -1844,6 +1848,8 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 	uint32_t my_key_len = 0;
 	char* peer_key_buf = nullptr;
 	uint32_t peer_key_len = 0;
+	unsigned char* signature = nullptr;
+	unsigned int signature_len = 0;
 	unsigned char* encrypted_sign = nullptr;
 	size_t encrypted_sign_len = 0;
 	unsigned char* tag = nullptr;
@@ -1932,8 +1938,7 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 
 				
 		// 2) Sign concat keys and remove them
-		unsigned int signature_len = 0;
-		unsigned char* signature = sign_message(concat_keys, concat_keys_len, signature_len);
+		signature = sign_message(concat_keys, concat_keys_len, signature_len);
 		secure_free(concat_keys, concat_keys_len);
 
 		if (!signature) {
@@ -1948,7 +1953,7 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 		if (!iv) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "generate_iv failed" << endl;
-			throw 3;
+			throw 4;
 		}
 
 
@@ -1957,14 +1962,7 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 		if (ret !=1) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "failed to crypt" << endl;
-			throw 3;
-		}
-		secure_free(signature, signature_len);
-
-		if (!encrypted_sign) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
-			<< "encrypt_message failed" << endl;
-			throw 3;
+			throw 5;
 		}
 	
 		// 5) Send messages
@@ -1973,7 +1971,7 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message iv failed" << endl;
-			throw 3;
+			throw 6;
 		}
 		
 		// 5b) send crypted signature
@@ -1981,7 +1979,7 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message encrypted_signature" << endl;
-			throw 3;
+			throw 6;
 		}
 
 		// 5c) Send tag
@@ -1989,12 +1987,19 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
 			<< "send_message tag failed" << endl;
-			throw 3;
+			throw 6;
 		}
 
 	} catch (int e) {
-		if (e >= 4) {
+		if (e >= 6) {
 			secure_free(encrypted_sign, encrypted_sign_len);
+			secure_free(tag, tag_len);
+		}
+		if (e >= 5) {
+			free(iv);
+		}
+		if (e >= 4) {
+			secure_free(signature, signature_len);
 		}
 		if (e >= 3) {
 			secure_free(peer_key_buf, peer_key_len);
@@ -2010,6 +2015,9 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 
 	// Clean stuff
 	secure_free(encrypted_sign, encrypted_sign_len);
+	secure_free(tag, tag_len);
+	free(iv);
+	secure_free(signature, signature_len);
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
@@ -2677,8 +2685,8 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 void Client::input_slave_thread ()
 {
 	int ret;
-	unsigned char* msg=nullptr;
-	size_t msg_len=0;
+	unsigned char* msg = nullptr;
+	size_t msg_len = 0;
 
 	while (true) { // TODO condizione di uscita?
 		// Receive message from server
@@ -2701,6 +2709,7 @@ void Client::input_slave_thread ()
 
 			//check is msg is valid (is a null terminated string)
 			if (msg[msg_len - 1] != '\0' || msg_len <= sizeof(uint32_t) + 1) {
+				free(msg);
 				return;
 			}
 
@@ -2708,6 +2717,7 @@ void Client::input_slave_thread ()
 			peer_username_len = ntohl(*(uint32_t*)(msg + 1));
 			if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
 				//TODO send_error()
+				free(msg);
 				return;
 			}
 
