@@ -2634,6 +2634,7 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		// 1) Receive iv
 		ret_long = receive_message(server_socket, (void**)&iv);
 		if (ret_long <= 0) {
+			cerr << "Error receive_plaintext: receive iv failed" << endl;
 			throw 0;
 		}
 		size_t iv_len = ret_long;
@@ -2641,6 +2642,7 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		// 2) Receive ciphertext
 		ret_long = receive_message(server_socket, (void**)&ciphertext);
 		if (ret_long <= 0) {
+			cerr << "Error receive_plaintext: receive ciphertext failed" << endl;
 			throw 1;
 		}
 		size_t ciphertext_len = ret_long;
@@ -2648,12 +2650,14 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		// 3) Receive tag
 		ret_long = receive_message(server_socket, (void**)&tag);
 		if (ret_long <= 0) {
+			cerr << "Error receive_plaintext: receive tag failed" << endl;
 			throw 2;
 		}
 		
 		// 4) Decrypt message
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
 		if (ret < 0) {
+			cerr << "Error receive_plaintext: gcm decrypt failed" << endl;
 			throw 3;
 		}
 
@@ -2685,14 +2689,15 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 void Client::input_slave_thread ()
 {
 	int ret;
-	unsigned char* msg = nullptr;
-	size_t msg_len = 0;
+	
+	while (true) {
+		unsigned char* msg = nullptr;
+		size_t msg_len = 0;
 
-	while (true) { // TODO condizione di uscita?
 		// Receive message from server
 		ret = receive_plaintext(server_socket, msg, msg_len, session_key);
 		if (ret != 1) {
-			cerr << "Error: receive_plaintext failed" << endl;
+			cerr << "Error input_slave_thread: receive_plaintext failed" << endl;
 			
 			// We notify that there was an error so that the paused thread on the mutex can restart
 			if (bridge.get_talking_state() != STATUS_TALKING_NO) {
@@ -2710,14 +2715,15 @@ void Client::input_slave_thread ()
 			//check is msg is valid (is a null terminated string)
 			if (msg[msg_len - 1] != '\0' || msg_len <= sizeof(uint32_t) + 1) {
 				free(msg);
+				shutdown(server_socket, SHUT_RDWR);
 				return;
 			}
 
 			//deserialize length of username
 			peer_username_len = ntohl(*(uint32_t*)(msg + 1));
 			if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
-				//TODO send_error()
 				free(msg);
+				shutdown(server_socket, SHUT_RDWR);
 				return;
 			}
 
