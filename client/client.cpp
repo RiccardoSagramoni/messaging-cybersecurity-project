@@ -21,17 +21,18 @@ int main(int argc, char** argv)
     cin >> username;
     if (username.length() > 32 || username.length() < 2) {
 		cerr << "Name must be less than 30 and more than 2 characters.";
+        exit(EXIT_FAILURE);
 	}
 
     if(!Client::does_username_exist(username)) {
         cerr << "Username " << username << " doesn't exist" << endl;
+        exit(EXIT_FAILURE);
     }
 
     // Ask user the password for client's private key
     string password;
     cout << "Enter PEM password for your private key: ";
     cin >> password; // TODO check cin ?
-
 
     Client client((uint16_t)port_long, username, password);
     if (!client.configure_socket()) {

@@ -441,7 +441,6 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		if (ret < 0) {
 			throw 2;
 		}
-
 		// 5) Send tag
 		ret = send_message(socket, tag, tag_len);
 		if (ret < 0) {
@@ -517,7 +516,7 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		if (ret < 0) {
 			throw 3;
 		}
-	
+
 	} catch (int e) {
 		if (e >= 3) {
 			free(tag);
@@ -2049,7 +2048,6 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 
 	return 1;
 }
-
 /**
  * // TODO
  * @param peer_username 
@@ -2115,8 +2113,6 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 		// 3) Check type of message
 		uint8_t* type_ptr = (uint8_t*)msg;
 		if (*type_ptr != TALKING) {
-			free(msg);
-
 			// Send closing message to dest
 			unsigned char closing_msg[1]= {SERVER_END_TALK};
 			send_plaintext(dest_socket, closing_msg, 1, dest_key);
@@ -2131,6 +2127,8 @@ void ServerThread::talk (const int src_socket, const unsigned char* src_key, con
 				cerr << "[Thread " << this_thread::get_id() << "] talk: "
 				<< "received wrong message type" << endl;
 			}
+
+			free(msg);
 			
 			return;
 		}

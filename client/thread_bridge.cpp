@@ -13,7 +13,6 @@ unsigned char* thread_bridge::wait_for_new_message (size_t& msg_len)
 	while (!is_msg_ready) {
 		cv_new_msg.wait(lock);
 	}
-
 	unsigned char* msg = new_msg;
 	msg_len = new_msg_len;
 	new_msg = nullptr;
@@ -36,7 +35,7 @@ void thread_bridge::notify_new_message(unsigned char* msg, size_t msg_len)
 	while (is_msg_ready) {
 		cv_new_msg.wait(lock);
 	}
-
+	
 	new_msg = msg;
 	new_msg_len = msg_len;
 	is_msg_ready = true;
@@ -74,4 +73,16 @@ void thread_bridge::add_request_talk(const string& peer_username)
 	unique_lock<mutex> lock(mx_request_talk);
 	has_received_request = true;
 	request_username = peer_username;
+}
+
+int thread_bridge::get_talking_state()
+{
+	unique_lock<mutex> lock(mx_talk_status);
+	return talk_status;
+}
+
+void thread_bridge::set_talking_state (int status)
+{
+	unique_lock<mutex> lock(mx_talk_status);
+	talk_status = status;
 }

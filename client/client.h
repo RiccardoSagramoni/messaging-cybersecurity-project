@@ -36,14 +36,18 @@ class thread_bridge {
 	bool has_received_request = false;
 	string request_username = "";
 
+	mutex mx_talk_status;
+	int talk_status;
+
 public:
 	unsigned char* wait_for_new_message (size_t& msg_len);
 	void notify_new_message(unsigned char* msg, size_t msg_len);
 	int check_request_talk(string& peer_username);
 	void add_request_talk(const string& peer_username);
+	int get_talking_state();
+	void set_talking_state(int status);
 };
 
-//thread child(&ServerThread::a, this, &return_value_child); // TODO remove
 
 
 class Client {
@@ -70,6 +74,11 @@ class Client {
 	static const string filename_crl;
 	
 	// }
+
+	// Connection between input thread and output thread
+	thread_bridge bridge;
+
+
 
 	// Fundamental methods for networking {
 
@@ -118,24 +127,32 @@ class Client {
 
 	// User commands {
 	
+	void execute_user_commands();
 	int talk();
 	int receive_response_command_to_server();
 	void print_command_options();
 	int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
-	int show(unsigned char* shared_key);
+	int show();
 	uint8_t get_message_type(const unsigned char* msg);
 	
-	int exit_by_application(unsigned char* shared_key);
-	int receive_request_to_talk(unsigned char* session_key);
-	int send_message_to_client(unsigned char* clients_session_key, unsigned char* server_session_key);
-	int receive_message_from_client(unsigned char* clients_session_key, unsigned char* server_session_key);
-	int negotiate_key_with_client (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int exit_by_application();
+	int send_message_to_client(unsigned char* clients_session_key);
+	int send_end_talking_message();
+	void receive_message_from_client(unsigned char* clients_session_key, int* return_value);
+	int negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int accept_request_to_talk(string peer_username);
+	int reject_request_to_talk(string peer_username);
+
+	void input_slave_thread ();
 
 	// }
 	
 	
 public:
 	Client(const uint16_t _port, const string _name, const string _password);
+	~Client();
+	
 	void run();
 
 	// Connection with the server {
