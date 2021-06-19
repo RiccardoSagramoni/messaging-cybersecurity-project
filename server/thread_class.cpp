@@ -686,17 +686,17 @@ EVP_PKEY* ServerThread::generate_key_dh ()
 		if (ret != 1) throw 2;
 
 	} catch (int e) {
-		if (e == 2) {
+		if (e >= 2) {
 			EVP_PKEY_CTX_free(dh_gen_ctx);
 		}
-		if (e == 1) {
+		if (e >= 1) {
 			EVP_PKEY_free(dh_params);
 		}
-
 		return nullptr;
 	}
 
 	EVP_PKEY_CTX_free(dh_gen_ctx);
+	EVP_PKEY_free(dh_params);
 	return dh_key;
 }
 
@@ -1056,6 +1056,7 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 	}
 
 	secure_free(client_signature, client_signature_len);
+	secure_free(concat_keys, concat_keys_len);
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
@@ -1298,7 +1299,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		}
 		if (e >= 4) {
 			secure_free(encrypted_sign, encrypted_sign_len);
-			free(tag);
+			secure_free(tag, tag_len);
 		}
 		if (e >= 3) {
 			secure_free(peer_key_buf, peer_key_len);
@@ -1316,6 +1317,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 	OPENSSL_free(ser_certificate);
 	X509_free(certificate);
 	secure_free(encrypted_sign, encrypted_sign_len);
+	secure_free(tag, tag_len);
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_key_buf, my_key_len);
 	BIO_free(mbio);
@@ -1573,7 +1575,7 @@ int ServerThread::verify_client_signature (const unsigned char* signature, const
 		if (!client_pubkey) {
 			cerr << "[Thread " << this_thread::get_id() << "] verify_client_signature: "
 			<< "client's public key is not installed" << endl;
-			return_value = -1;
+			return_value = -2;
 			throw 0;
 		}
 
@@ -1614,6 +1616,9 @@ int ServerThread::verify_client_signature (const unsigned char* signature, const
 		}
 		return return_value;
 	}
+
+	EVP_MD_CTX_free(ctx);
+	EVP_PKEY_free(client_pubkey);
 
 	return 1;
 }

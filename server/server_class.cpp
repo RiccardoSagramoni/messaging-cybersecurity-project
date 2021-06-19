@@ -242,7 +242,11 @@ int Server::remove_client (const string& username)
 	free((void*) client_data->key);
 
 	// Remove client data
-	connected_client.erase(username);
+	auto it = connected_client.find(username);
+	if (it != connected_client.end()) {
+		delete it->second;
+		connected_client.erase(it);
+	}
 
 	cout << "[Thread " << this_thread::get_id() << "]: "
 	<< "user " << username << " exits" << endl;
