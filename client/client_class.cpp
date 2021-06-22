@@ -304,6 +304,7 @@ void Client::execute_user_commands () // TODO handle errors (close socket!!)
 					cerr << "reject request error" << endl;
 					break;
 				}
+				cout << endl;
 			}
 		}
 		else {
