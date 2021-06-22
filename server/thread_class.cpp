@@ -228,7 +228,7 @@ X509* ServerThread::get_server_certificate ()
  * @param msg_len length of message
  * @param signature_len return length of generated signature
  * 
- * @return generated signature of given message
+ * @return generated signature of given message on success, NULL on failure
  */
 unsigned char* ServerThread::sign_message(const unsigned char* msg, const size_t msg_len, unsigned int& signature_len)
 {
@@ -1081,6 +1081,16 @@ bool ServerThread::check_username_validity (const string& username)
 	// Check is username exists by checking if 
 	// the relative public key is installed on the server
 	string file_name = "clients/" + username + ".pem";
+
+	// DIRECTORY TRAVERSAL: check if the generated filename 
+	// could generate a directory traversal attack
+	int ret = check_directory_traversal(file_name.c_str());
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] check_username_validity: "
+		<< "check_directory_traversal returned " << ret << endl;
+		return false;
+	}
+
 	FILE* file = fopen(file_name.c_str(), "r");
 	
 	if (file) {
@@ -1091,6 +1101,35 @@ bool ServerThread::check_username_validity (const string& username)
 	else {
 		return false;
 	}
+}
+
+/**
+ * Check if a filename is directory traversal proof
+ * 
+ * @param file_name name to check
+ * @return 1 if the file name is correct, 0 if it's incorrect, -1 if any other error occurs 
+ */
+int ServerThread::check_directory_traversal (const char* file_name)
+{
+	char* canon_file_name = realpath(file_name, NULL);
+	if (!canon_file_name) {
+		cerr << "[Thread " << this_thread::get_id() << "] check_directory_traversal: "
+		<< "realpath canon_file_name failed" << endl;
+		return -1;
+	}
+	char* server_directory = realpath(".", NULL);
+	if (!server_directory) {
+		cerr << "[Thread " << this_thread::get_id() << "] check_directory_traversal: "
+		<< "realpath server_directory failed" << endl;
+		return -1;
+	}
+
+	bool ret = (strncmp(canon_file_name, server_directory, strlen(server_directory)) == 0);
+
+	free(canon_file_name);
+	free(server_directory);
+
+	return ret ? 1 : 0;
 }
 
 
@@ -1835,7 +1874,7 @@ int ServerThread::execute_show ()
 
 /**
  * Starts a talk between two clients. 
- * @param msg 
+ * @param msg // TODO
  * @param msg_len 
  * @return int 
  */

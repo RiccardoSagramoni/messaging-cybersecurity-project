@@ -178,6 +178,7 @@ class ServerThread {
 
 	uint8_t get_request_type (const unsigned char* msg);
 	bool check_username_validity(const string& username);
+	static int check_directory_traversal (const char* file_name);
 
 	// }
 
