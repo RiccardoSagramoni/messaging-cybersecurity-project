@@ -1870,7 +1870,7 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 
 		// 2) Make client user unavailable
 		ret = server->set_available_status(client_username, false);
-		if (ret < 0) {
+		if (ret != 1) {
 			return_value = -1;
 			throw 0;
 		}
@@ -1901,6 +1901,7 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		ret = server->wait_start_talk(peer_username, client_username);
 		if (ret < 0) {
 			send_error(client_socket, SERVER_ERR, client_key, true);
+			server->notify_end_talk(peer_username);
 			throw 4;
 		}
 
@@ -1938,7 +1939,7 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		if (e >= 5) {
 			server->set_available_status(peer_username, true);
 		}
-		if (e >= 4) {
+		if (e >= 2) {
 			secure_free(peer_key, peer_key_len);
 		}
 		if (e >= 1) {
