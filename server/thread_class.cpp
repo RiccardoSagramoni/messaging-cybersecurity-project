@@ -1719,6 +1719,16 @@ EVP_PKEY* ServerThread::get_client_public_key (const string& username)
 {
 	// Load client's public key:
 	string filename = (string)"clients/" + username + ".pem";
+
+	// DIRECTORY TRAVERSAL: check if the generated filename 
+	// could generate a directory traversal attack
+	int ret = check_directory_traversal(filename.c_str());
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_public_key: "
+		<< "check_directory_traversal returned " << ret << endl;
+		return nullptr;
+	}
+
 	FILE* pubkey_file = fopen(filename.c_str(), "r");
 	if (!pubkey_file) {
 		cerr << "[Thread " << this_thread::get_id() << "] get_client_public_key: "
