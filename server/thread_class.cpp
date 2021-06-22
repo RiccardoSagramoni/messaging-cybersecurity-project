@@ -1939,7 +1939,7 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		if (e >= 5) {
 			server->set_available_status(peer_username, true);
 		}
-		if (e >= 2) {
+		if (e >= 4) {
 			secure_free(peer_key, peer_key_len);
 		}
 		if (e >= 1) {
