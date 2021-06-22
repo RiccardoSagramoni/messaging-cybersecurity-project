@@ -1,2 +1,1 @@
-- [C] BUG quando bob rifiuta la request talk di alice
-- [C] LEAK 1 byt in input slave thread quando alice manda la richiesta di talk, fimnisce la talk ed esce dal server
+- [C] LEAK 1 byte in input slave thread quando alice manda la richiesta di talk, finisce la talk ed esce dal server

@@ -1746,10 +1746,11 @@ int ServerThread::execute_client_command (const unsigned char* msg, const size_t
 	int ret = 0;
 
 	if (request_type == TYPE_SHOW) {
-		ret = execute_show();
+		return execute_show();
 	}
 	else if (request_type == TYPE_TALK) {
 		ret = execute_talk(msg, msg_len);
+		return (ret < 0) ? -1 : 1;
 	}
 	else if (request_type == TYPE_EXIT) {
 		server->handle_socket_lock(client_username, false, 2);
@@ -1760,14 +1761,14 @@ int ServerThread::execute_client_command (const unsigned char* msg, const size_t
 		ret = execute_accept_talk(msg, msg_len, (request_type == ACCEPT_TALK));
 		if (ret < 0) {
 			send_error(client_socket, SERVER_ERR, client_key, true);
+			return -1;
 		}
+		return 1;
 	}
 	else { // Error
 		send_error(client_socket, ERR_WRONG_TYPE, client_key, true);
 		return -1;
 	}
-
-	return (ret != 1) ? -1 : 1;
 }
 
 /**

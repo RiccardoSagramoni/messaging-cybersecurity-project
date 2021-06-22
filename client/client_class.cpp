@@ -357,24 +357,18 @@ int Client::talk ()
 	// Insert username
 	memcpy(message + 1 + sizeof(string_size), peer_username.c_str(), peer_username.length() + 1);
 
-	try {
-		// Send message to server
-		ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
-		free(message);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error send message to server" << endl;
-			throw 0;
-		}
-		
-		plaintext = bridge.wait_for_new_message(plaintext_len);
+	// Send message to server
+	ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
+	free(message);
 
-	} catch (int e) {
-		if (e >= 1) {
-			free(plaintext);
-		}
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] talk: "
+		<< "error send message to server" << endl;
 		return -1;
 	}
+
+
+	plaintext = bridge.wait_for_new_message(plaintext_len);
 
 	// Extract message type
 	uint8_t message_type = get_message_type(plaintext);
@@ -913,6 +907,7 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 		}
 
 		if (bridge.get_talking_state() != STATUS_TALKING_YES) {
+			free(plaintext_from_server);
 			break;
 		}
 
@@ -960,13 +955,12 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 
 
 
-
 int Client::reject_request_to_talk (string peer_username) 
 {
 	// Prepare request for show 
-	char message[1] = {REFUSE_TALK};
+	unsigned char message[1] = {REFUSE_TALK};
 	// Send message to server
-	int ret = send_plaintext(server_socket, (unsigned char*)message, 1, session_key);
+	int ret = send_plaintext(server_socket, message, 1, session_key);
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "error send message to server" << endl;
