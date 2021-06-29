@@ -117,6 +117,8 @@ class Client {
 	int send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
 	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key);
 
+	int check_directory_traversal (const char* file_name);
+
 	// }
 
 

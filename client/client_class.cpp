@@ -2736,3 +2736,32 @@ void Client::input_slave_thread ()
 		}
 	}
 }
+
+
+/**
+ * Check if a filename is directory traversal proof
+ * 
+ * @param file_name name to check
+ * @return 1 if the file name is correct, 0 if it's incorrect, -1 if any other error occurs 
+ */
+int Client::check_directory_traversal (const char* file_name) {
+	char* canon_file_name = realpath(file_name, NULL);
+	if (!canon_file_name) {
+		cerr << "[Thread " << this_thread::get_id() << "] check_directory_traversal: "
+		<< "realpath canon_file_name failed" << endl;
+		return -1;
+	}
+	char* client_directory = realpath(".", NULL);
+	if (!client_directory) {
+		cerr << "[Thread " << this_thread::get_id() << "] check_directory_traversal: "
+		<< "realpath client_directory failed" << endl;
+		return -1;
+	}
+
+	bool ret = (strncmp(canon_file_name, client_directory, strlen(client_directory)) == 0);
+
+	free(canon_file_name);
+	free(client_directory);
+
+	return ret ? 1 : 0;
+}
