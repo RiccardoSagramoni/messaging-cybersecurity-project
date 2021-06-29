@@ -117,7 +117,7 @@ class Client {
 	int send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key);
 	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, unsigned char* shared_key);
 
-	int check_directory_traversal (const char* file_name);
+	static int check_directory_traversal (const char* file_name);
 
 	// }
 
@@ -139,7 +139,6 @@ class Client {
 	
 	void execute_user_commands();
 	int talk();
-	int receive_response_command_to_server();
 	void print_command_options();
 	int send_command_to_server(unsigned char* msg, unsigned char* shared_key);
 	int show();

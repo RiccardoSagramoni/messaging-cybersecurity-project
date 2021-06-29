@@ -65,6 +65,16 @@ void Client::exit()
 bool Client::does_username_exist(const string& username)
 {
 	string filename = keys_folder + username + keys_extension;
+
+	// DIRECTORY TRAVERSAL: check if the generated filename 
+	// could generate a directory traversal attack
+	int ret = check_directory_traversal(filename.c_str());
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] does_username_exist: "
+		<< "check_directory_traversal returned " << ret << endl;
+		return false;
+	}
+
 	FILE* file = fopen(filename.c_str(), "r");
 	if (!file) {
 		return false;
@@ -417,7 +427,14 @@ int Client::talk ()
 	return 1;
 }
 
-// DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
+
+/** 
+ * DIFFIE-HELLMAN PROTOCOL: exchange keys between clients for master
+ * @param clients_session_key session key for comunication between clients
+ * @param clients_session_key_len client session key lenght
+ * @return 1 on success, -1 on failure
+ */
+
 int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len)
 {
 	int ret;
@@ -535,12 +552,11 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 }
 
 
-/**
- * // TODO
- * @param clients_session_key 
- * @param clients_session_key_len 
- * 
- * @return 1 on success, -1 on failure 
+/** 
+ * DIFFIE-HELLMAN PROTOCOL: exchange keys between clients for slave
+ * @param clients_session_key session key for comunication between clients
+ * @param clients_session_key_len client session key lenght
+ * @return 1 on success, -1 on failure
  */
 int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len)
 {
@@ -954,7 +970,12 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 	return;
 }
 
-
+/**
+ * Refuse request to talk from another client.
+ * 
+ * @param peer_username username of client that has sent the request
+ * @return 1 on success, -1 on failure 
+ */
 
 int Client::reject_request_to_talk (string peer_username) 
 {
@@ -970,76 +991,6 @@ int Client::reject_request_to_talk (string peer_username)
 	return 1;
 }
 
-
-
-
-
-//send a message type || size username || username
-int Client::send_command_to_server(unsigned char* msg, unsigned char* shared_key) {
-	int ret = 0;
-	unsigned char* iv = nullptr;
-	unsigned char* ciphertext = nullptr;
-	unsigned char* tag = nullptr;
-	size_t msg_len=sizeof(msg);
-	size_t iv_len = 0;
-	size_t tag_len = 0;
-	size_t ciphertext_len = 0;
-	try {
-		// Generate IV
-		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
-		if (!iv) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
-			<< "generate_iv failed" << endl;
-			throw 1;
-		}
-		// 3) Encrypt msg
-		ret = gcm_encrypt(msg, msg_len, iv, iv_len, shared_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
-		if (ret !=1) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
-			<< "failed to crypt" << endl;
-			throw 2;
-		}
-		//secure_free(msg, msg_len);
-
-		//Send messages
-		//Send iv
-		ret = send_message(server_socket, (void*)iv, iv_len);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
-			<< "send_message iv failed" << endl;
-			throw 3;
-		}
-		
-		//Send crypted msg
-		ret = send_message(server_socket, (void*)ciphertext, ciphertext_len);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
-			<< "send_message encrypted_msg" << endl;
-			throw 3;
-		}
-
-		//Send tag
-		ret = send_message(server_socket, (void*)tag, tag_len);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_command_to_server: "
-			<< "send_message tag failed" << endl;
-			throw 3;
-		}
-	} catch (int e) {
-		if (e >= 2) {
-			secure_free(tag, tag_len);
-			secure_free(ciphertext, ciphertext_len);
-		}
-		if (e >= 1) {
-			secure_free(iv, iv_len);
-		}
-		return -1;
-	}
-	secure_free(tag, tag_len);
-	secure_free(ciphertext, ciphertext_len);
-	secure_free(iv, iv_len);
-	return 1;
-}
 
 /**
  * Execute the function "show" of the application, i.e. send a request 
@@ -1129,14 +1080,23 @@ int Client::exit_by_application()
 	return 1;
 }
 
-
+/**
+ * Return type of received message
+ * 
+ * @return 1 on success, -1 on failure 
+ */
 uint8_t Client::get_message_type(const unsigned char* msg)
 {
 	return (uint8_t)msg[0];
 }
 
 
-//negotiation of key and autentication with server
+/**
+ * Try to authenticate the server and negotiate a symmetric shared secret key,
+ * using the Station-to-Station protocol (a modified version of Diffie-Hellman)
+ * 
+ * @return 1 on success, -1 on failur
+ */
 int Client::negotiate() 
 {
 	int ret;
@@ -1385,6 +1345,13 @@ int Client::negotiate()
 	return 1;
 }
 
+
+/**
+ * Free the allocated memory, without leaving any trace of its content
+ * 
+ * @param addr address to the allocated memory
+ * @param len size of allocated memory
+ */
 void Client::secure_free (void* addr, size_t len) 
 {
 	#pragma optimize("", off);
@@ -1450,7 +1417,18 @@ EVP_PKEY* Client::generate_key_dh ()
 
 
 
-// get session key
+/**
+ * Derive a shared session key
+ * according to Diffie-Hellman key exchange method.
+ * The shared secret obtained by the merge of server and client's keys is then
+ * hashed with SHA-256 and the first <key_len> bytes are used as shared key
+ * 
+ * @param my_dh_key the key generated by the client
+ * @param peer_key the key generated by the server
+ * @param key_len the required length of the key
+ * 
+ * @return the sessione key on success, NULL otherwise
+ */
 unsigned char* Client::derive_session_key (EVP_PKEY* my_dh_key, 
 												 EVP_PKEY* peer_key, 
 												 size_t key_len)
@@ -1583,7 +1561,12 @@ unsigned char* Client::derive_session_key (EVP_PKEY* my_dh_key,
 
 
 
-// receive public key from server
+/**
+ * Get server public key
+ * @param peer_key the key of the server
+ * 
+ * @return 1 on success, -1 on failur
+ */
 int Client::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
 	int ret_int;
 	long ret_long;
@@ -1629,7 +1612,22 @@ int Client::receive_from_server_pub_key(EVP_PKEY*& peer_key) {
 }
 
 
-// Decrypt and verify  sign
+/**
+ * Decrypt signature recived from server and verify it
+ * 
+ * @param chipertext chipertext recieved
+ * @param ciphertext_len chipertext lenght
+ * @param my_dh_key client key
+ * @param peer_key server key
+ * @param shared_key session key between client and server
+ * @param shared_key_len session key lenght
+ * @param iv initalization vector
+ * @param iv_len initalization vector lenght
+ * @param tag tag
+ * @param server_pubkey public key extracted from certificate
+ * 
+ * @return 1 on success, -1 on failur
+ */
 int Client::decrypt_and_verify_sign(unsigned char* ciphertext, size_t ciphertext_len,
 										  EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, 
 										  unsigned char* shared_key, size_t shared_key_len, 
@@ -1832,7 +1830,16 @@ int Client::verify_server_signature (unsigned char* signature, size_t signature_
 
 
 
-// Encrypt and send sign
+/**
+ * Send sign to server
+ * 
+ * @param my_dh_key client key
+ * @param peer_key server key
+ * @param shared_key session key between client and server
+ * @param shared_key_len length of plaintextsession key lenght
+ * 
+ * @return 1 on success, -1 on failure
+ */
 int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* shared_key, size_t shared_key_len) {
 	int ret;
 	long ret_long;
@@ -2022,7 +2029,15 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 
 
 
-// for sign message 
+/**
+ * Generate signature and sign message
+ * 
+ * @param msg msg to sign
+ * @param msg_len msg lenght
+ * @param signature_len signature len
+ * 
+ * @return signature
+ */
 unsigned char* Client::sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len)
 {
 	int ret;
@@ -2103,7 +2118,11 @@ unsigned char* Client::sign_message(unsigned char* msg, size_t msg_len, unsigned
 
 
 
-//get private key
+/**
+ * Get private key of the client
+ * 
+ * @return private key
+ */
 EVP_PKEY* Client::get_client_private_key ()
 {
 	string filename_prvkey = keys_folder + client_username + keys_extension;
@@ -2522,13 +2541,10 @@ unsigned char* Client::generate_iv (EVP_CIPHER const* cipher, size_t& iv_len)
 
 
 
-
-
-int Client::receive_response_command_to_server()
-{
-	return -1; // TODO
-}
-
+/**
+ * Print command that client can shoose
+ * 
+ */
 void Client::print_command_options() 
 {
 	cout<<"Select command:"<<endl;
@@ -2540,7 +2556,20 @@ void Client::print_command_options()
 
 
 
-
+/**
+ * Send a plaintext to the server. The plaintext is encrypted and authenticated with AES-gcm.
+ * This functions sends three messages through the network:
+ * 1) Initialization vector
+ * 2) Ciphertext
+ * 3) Tag
+ * 
+ * @param socket socket descriptor
+ * @param msg message
+ * @param msg_len message length
+ * @param key shared key between client and server
+ * 
+ * @return 1 on success, -1 on failure
+ */
 int Client::send_plaintext (const int socket, unsigned char* msg, const size_t msg_len, unsigned char* key)
 {
 	int ret;
@@ -2679,7 +2708,10 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 
 
 /**
- * TODO
+ * Receive message from server that has sent another client.
+ * Is used to receive message after starting the chat.
+ * Is used to receive request to talk.
+ * 
  */
 void Client::input_slave_thread ()
 {
