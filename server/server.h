@@ -46,7 +46,7 @@ struct connection_data {
 	bool is_talk_ended = false;
 	int talk_exit_status = 0;
 
-	// Counter against replay attack
+	// Counters used to prevent replay attacks
 	mutex counter_mx;
 	uint32_t server_counter = 0;
 	uint32_t client_counter = 0;

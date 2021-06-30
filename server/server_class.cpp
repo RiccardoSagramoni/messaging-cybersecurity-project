@@ -434,7 +434,6 @@ int Server::wait_end_talk (const string& user)
  * @param wanted_user username of the client who received the request to talk
  * @param asking_user username of the client who sent the request to talk
  * @param is_accepting true if the client has accepted a request to talk, false otherwise
- * // TODO
  * 
  * @return 1 on success, -1 on failure 
  */
