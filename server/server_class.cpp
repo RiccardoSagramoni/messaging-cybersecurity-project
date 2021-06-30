@@ -429,10 +429,10 @@ int Server::wait_end_talk (const string& user)
 }
 
 /**
- * Notify to the waiting threads that the client has answered to onw request to talk
+ * Notify to the waiting threads that the client has answered to request to talk
  * 
- * @param wanted_user // TODO
- * @param asking_user 
+ * @param wanted_user username of the client who received the request to talk
+ * @param asking_user username of the client who sent the request to talk
  * @param is_accepting true if the client has accepted a request to talk, false otherwise
  * 
  * @return 1 on success, -1 on failure 
@@ -474,10 +474,12 @@ int Server::notify_start_talk (const string& wanted_user, const string asking_us
 }
 
 /**
- * // TODO
+ * Notify to the user's main server thread that the the talk has ended, so that 
+ * it can restart its normal execution
  * 
- * @param user 
- * @return int 
+ * @param user client username
+ * 
+ * @return 1 on success, -1 on error 
  */
 int Server::notify_end_talk (const string& user)
 {

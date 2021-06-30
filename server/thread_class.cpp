@@ -54,7 +54,6 @@ void ServerThread::run ()
 		send_error(client_socket, ERR_ALREADY_LOGGED, client_key, true);
 
 		close(client_socket);
-		secure_free(client_key, client_key_len);
 
 		return;
 	}
@@ -111,7 +110,7 @@ void ServerThread::run ()
 /**
  * Generate public DH parameters for this application
  * 
- * @return DH parameters
+ * @return DH parameters on success, NULL on failure
  */
 DH* ServerThread::get_dh2048 ()
 {
@@ -189,6 +188,11 @@ EVP_PKEY* ServerThread::get_server_private_key ()
 	return prvkey;
 }
 
+/**
+ * Get server's certicate from file
+ * 
+ * @return server's certificate on success, NULL on failure 
+ */
 X509* ServerThread::get_server_certificate ()
 {
 	
@@ -1884,9 +1888,12 @@ int ServerThread::execute_show ()
 
 /**
  * Starts a talk between two clients. 
- * @param msg // TODO
- * @param msg_len 
- * @return int 
+ * It will send an error message in case of recoverable errors
+ * 
+ * @param msg received message (contains the name of the second user)
+ * @param msg_len message length
+ * 
+ * @return 1 on success, 0 if error is recoverable (e.g. wrong message format), -1 otherwise
  */
 int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 {
@@ -1897,7 +1904,7 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 	unsigned char* peer_key;
 	size_t peer_key_len;
 	
-	try { // TODO error handling and send_error
+	try {
 		// 1) Check is msg is valid (is a null terminated string)
 		if (msg[msg_len - 1] != '\0' || msg_len <= sizeof(uint32_t) + 1) {
 			send_error(client_socket, SERVER_ERR, client_key, false);
@@ -2007,10 +2014,11 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 }
 
 /**
- * // TODO
- * @param socket 
- * @param from_user 
- * @param key 
+ * Send a request to talk
+ * 
+ * @param socket descriptor of socket related to the receiving client.
+ * @param from_user username who sent the request
+ * @param key symmetric key related to the receiving client
  * 
  * @return 1 on success, -1 on failure 
  */
@@ -2044,7 +2052,8 @@ int ServerThread::send_request_to_talk (const int socket, const string& from_use
 }
 
 /**
- * // TODO
+ * Notify client that its request to talk has been accepted
+ * 
  * @return 1 on success, -1 on failure 
  */
 int ServerThread::send_notification_for_accepted_talk_request ()
@@ -2055,9 +2064,11 @@ int ServerThread::send_notification_for_accepted_talk_request ()
 }
 
 /**
- * // TODO
- * @param peer_socket 
- * @param peer_key 
+ * Start the negotiation protocol of the session key for a client-to-client talk
+ * 
+ * @param peer_socket socket of client B
+ * @param peer_key key of client B
+ * 
  * @return 1 on success, -1 on failure 
  */
 int ServerThread::negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key)
@@ -2105,10 +2116,13 @@ int ServerThread::negotiate_key_between_clients (const int peer_socket, const un
 	return 1;
 }
 /**
- * // TODO
- * @param peer_username 
- * @param peer_socket 
- * @param peer_key 
+ * Start the talk between client A and B. 
+ * Client A's data are already member variable of this thread
+ * 
+ * @param peer_username username of client B
+ * @param peer_socket socket of client B
+ * @param peer_key key of client B
+ * 
  * @return 1 on success, 0 if client_socket has been closed, -1 on failure 
  */
 int ServerThread::talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key)
@@ -2214,10 +2228,12 @@ B->S2 chiudi
 */
 
 /**
- * // TODO
- * @param msg 
- * @param msg_len 
- * @param accept 
+ * Accept or refuse a request to talk
+ * 
+ * @param msg received message (contains the username of who sent the request)
+ * @param msg_len message length
+ * @param accept true if the request has been accepted, false otherwise
+ * 
  * @return 1 on success, -1 failure 
  */
 int ServerThread::execute_accept_talk (const unsigned char* msg, const size_t msg_len, const bool accept)

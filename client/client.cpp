@@ -32,7 +32,11 @@ int main(int argc, char** argv)
     // Ask user the password for client's private key
     string password;
     cout << "Enter PEM password for your private key: ";
-    cin >> password; // TODO check cin ?
+    cin >> password;
+    if(!cin){
+        cerr << "Bad value!" << endl;
+        exit(EXIT_FAILURE);
+    }
 
     Client client((uint16_t)port_long, username, password);
     if (!client.configure_socket()) {

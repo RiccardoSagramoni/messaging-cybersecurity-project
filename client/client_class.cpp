@@ -260,7 +260,7 @@ void Client::run()
 /**
  * Wait for user's commands and execute them
  */
-void Client::execute_user_commands () // TODO handle errors (close socket!!)
+void Client::execute_user_commands ()
 {
 	int ret;
 	string command;
@@ -817,7 +817,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 
 				ret = send_end_talking_message();
 				if (ret < 0) {
-					return -1; // TODO FAILURE!
+					cerr << "[Thread " << this_thread::get_id() << "] send_message_to_client: "
+					<< "send_end_talking_message failed" << endl;
+					throw 0;
 				}
 								
 				break;
@@ -1065,8 +1067,8 @@ int Client::show()
  * @return 1 on success, -1 on failure 
  */
 int Client::exit_by_application() 
-{ // TODO here!
-	//Allocate message
+{
+	// Allocate message
 	char message[1] = {TYPE_EXIT};
 
 	// Send message to server
@@ -2127,6 +2129,15 @@ EVP_PKEY* Client::get_client_private_key ()
 {
 	string filename_prvkey = keys_folder + client_username + keys_extension;
 
+	// DIRECTORY TRAVERSAL: check if the generated filename 
+	// could generate a directory traversal attack
+	int ret = check_directory_traversal(filename_prvkey.c_str());
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] get_client_private_key: "
+		<< "check_directory_traversal returned " << ret << endl;
+		return nullptr;
+	}
+
 	// Load my private key:
 	FILE* prvkey_file = fopen(filename_prvkey.c_str(), "r");
 	if (!prvkey_file) {
@@ -2726,6 +2737,8 @@ void Client::input_slave_thread ()
 		if (ret != 1) {
 			cerr << "Error input_slave_thread: receive_plaintext failed" << endl;
 			
+			shutdown(server_socket, SHUT_RDWR);
+
 			// We notify that there was an error so that the paused thread on the mutex can restart
 			if (bridge.get_talking_state() != STATUS_TALKING_NO) {
 				bridge.notify_new_message(nullptr, 0); 
