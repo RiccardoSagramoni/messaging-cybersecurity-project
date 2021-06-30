@@ -103,11 +103,14 @@ public:
 	// }
 
 	int prepare_for_talking (const string& username, unsigned char*& key, size_t& key_len);
-	int wait_start_talk (const string& wanted_user, const string& asking_user, uint32_t& server_counter, uint32_t& client_counter);
-	int wait_end_talk (const string& user, uint32_t& server_counter, uint32_t& client_counter);
-	int notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting, const uint32_t server_counter, const uint32_t client_counter);
-	int notify_end_talk (const string& user, const uint32_t server_counter, const uint32_t client_counter);
+	int wait_start_talk (const string& wanted_user, const string& asking_user);
+	int wait_end_talk (const string& user);
+	int notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting);
+	int notify_end_talk (const string& user);
 	int set_talk_exit_status(const string& username, const int status);
+
+	int check_client_counter(const string& username, const uint32_t counter);
+	int get_server_counter(const string& username, uint32_t& counter);
 };
 
 
@@ -124,13 +127,6 @@ class ServerThread {
 	string client_username;
 	unsigned char* client_key = nullptr;
 	size_t client_key_len = 0;
-
-	// Counters against replay attacks {
-	
-	uint32_t server_counter = 0;
-	uint32_t client_counter = 0;
-
-	// }
 
 	// Fundamental methods for networking {
 
@@ -177,9 +173,9 @@ class ServerThread {
 
 	// Management of client's request {
 
-	int send_plaintext (const int socket, const unsigned char* msg, const size_t msg_len, const unsigned char* key, uint32_t& counter);
-	int send_error (const int socket, const uint8_t type, const unsigned char* key, const bool own_lock, uint32_t& counter);
-	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key, uint32_t& counter);
+	int send_plaintext (const int socket, const unsigned char* msg, const size_t msg_len, const unsigned char* key, const string& username);
+	int send_error (const int socket, const uint8_t type, const unsigned char* key, const bool own_lock, const string& username);
+	int receive_plaintext (const int socket, unsigned char*& msg, size_t& msg_len, const unsigned char* key, const string& username);
 
 	int get_new_client_command (unsigned char*& msg, size_t& msg_len);
 	int execute_client_command (const unsigned char* msg, const size_t msg_len);
@@ -196,11 +192,11 @@ class ServerThread {
 
 	// Talk {
 
-	int send_request_to_talk (const int socket, const string& from_user, const unsigned char* key, uint32_t& counter);
+	int send_request_to_talk (const int socket, const string& from_user, const string& to_user, const unsigned char* key);
 	int send_notification_for_accepted_talk_request();
-	int negotiate_key_between_clients (const int peer_socket, const unsigned char* peer_key, uint32_t& peer_server_counter, uint32_t& peer_client_counter);
-	int talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key, uint32_t& peer_server_counter, uint32_t& peer_client_counter);
-	void talk (const int src_socket, const unsigned char* src_key, const int dest_socket, const unsigned char* dest_key, uint32_t* s_counter,  uint32_t* c_counter, atomic<int>* return_value);
+	int negotiate_key_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
+	int talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
+	void talk (const string& src_username, const int src_socket, const unsigned char* src_key, const string& dest_username, const int dest_socket, const unsigned char* dest_key, atomic<int>* return_value);
 
 	// }
 
