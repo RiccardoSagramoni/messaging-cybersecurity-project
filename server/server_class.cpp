@@ -594,5 +594,6 @@ int Server::get_server_counter(const string& username, uint32_t& counter)
 
 	unique_lock<mutex> lock(client_data->counter_mx);
 	counter = client_data->server_counter;
+	client_data->server_counter++;
 	return 1;
 }
