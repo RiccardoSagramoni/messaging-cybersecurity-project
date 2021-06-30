@@ -68,6 +68,9 @@ class Client {
 	unsigned char* session_key = nullptr;
 	size_t session_key_len = 0;
 
+	uint32_t server_counter = 0;
+	uint32_t client_counter = 0;
+
 	// }
 
 	// Files {

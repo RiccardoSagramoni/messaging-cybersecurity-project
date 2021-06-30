@@ -794,6 +794,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 	unsigned char* final_ciphertext = nullptr;
 	size_t final_ciphertext_len = 0;
 
+	uint32_t counter = 0;
+	unsigned char* actual_message = nullptr;
+
 	// Clean standard input
 	cin.clear();
 	cin.ignore(numeric_limits<streamsize>::max(), '\n');
@@ -825,6 +828,17 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 				break;
 			}
 
+			// Add a counter to prevent replay attacks during the chat
+			size_t actual_message_len = sizeof(counter) + message.length() + 1;
+			actual_message = (unsigned char*)malloc(actual_message_len);
+			if (!actual_message) {
+				throw -1;
+			}
+			uint32_t temp_counter = htonl(counter);
+			memcpy(actual_message, &temp_counter, sizeof(temp_counter));
+			memcpy(actual_message + sizeof(temp_counter), message.c_str(), message.length() + 1);
+			counter++;
+
 			// 3) Encrypt message with CLIENT-TO-CLIENT key
 			// 3a) Generate IV
 			iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
@@ -833,7 +847,7 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			}
 
 			// 3b) Encrypt message
-			ret = gcm_encrypt((unsigned char*)message.c_str(), message.length() + 1, iv, iv_len, clients_session_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
+			ret = gcm_encrypt(actual_message, actual_message_len, iv, iv_len, clients_session_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
 			if (ret < 0) {
 				throw 1;
 			}
@@ -875,6 +889,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			if (e >= 1) {
 				secure_free(iv, iv_len);
 			}
+			if (e >= 0) {
+				free(actual_message);
+			}
 
 			shutdown(server_socket, SHUT_RDWR);
 			bridge.set_talking_state(STATUS_TALKING_ERR);
@@ -886,6 +903,7 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 		secure_free(ciphertext, ciphertext_len);
 		secure_free(tag, tag_len);
 		secure_free(iv, iv_len);
+		free(actual_message);
 	}
 
 	return 1;
@@ -913,6 +931,8 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 	size_t plaintext_from_server_len;
 	unsigned char* message = nullptr;
 	size_t message_len;
+
+	uint32_t counter = 0;
 
 	while(true) {
 		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
@@ -959,8 +979,28 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 				return; 
 			}
 
+			// Check if it's right counter
+			uint32_t received_counter;
+			memcpy(&received_counter, message, sizeof(received_counter));
+			received_counter = ntohl(received_counter);
+
+			if (received_counter != counter) {
+				cerr << "Error: wrong counter client-to-client" << endl;
+				*return_value = 0;
+				free(plaintext_from_server);
+				free(message);
+
+				// Notify hard failure to the sending thread
+				shutdown(server_socket, SHUT_RDWR);
+				bridge.set_talking_state(STATUS_TALKING_ERR);
+
+				return; 
+			}
+
+			counter++;
+
 			// Print received message
-			cout << endl << message << endl << "> "; 
+			cout << endl << (char*)(message + sizeof(received_counter)) << endl << "> "; 
 			fflush(stdout);
 			free(message);
 		}
@@ -2585,6 +2625,7 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 {
 	int ret;
 
+	unsigned char* actual_message = nullptr;
 	unsigned char* iv = nullptr;
 	size_t iv_len = 0;
 	unsigned char* ciphertext = nullptr;
@@ -2593,6 +2634,17 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 	size_t tag_len = 0;
 
 	try {
+		// Add counter against replay attack
+		size_t actual_message_len = sizeof(client_counter) + msg_len;
+		actual_message = (unsigned char*)malloc(actual_message_len);
+		if (!actual_message) {
+			throw -1;
+		}
+		uint32_t temp_counter = htonl(client_counter);
+		memcpy(actual_message, &temp_counter, sizeof(temp_counter));
+		memcpy(actual_message + sizeof(temp_counter), msg, msg_len);
+		client_counter++;
+		
 		// 1) Generate IV
 		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
 		if (!iv) {
@@ -2600,7 +2652,7 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 		}
 
 		// 2) Encrypt message
-		ret = gcm_encrypt(msg, msg_len, iv, iv_len, key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
+		ret = gcm_encrypt(actual_message, actual_message_len, iv, iv_len, key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
 		if (ret < 0) {
 			throw 1;
 		}
@@ -2631,9 +2683,13 @@ int Client::send_plaintext (const int socket, unsigned char* msg, const size_t m
 		if (e >= 1) {
 			free(iv);
 		}
+		if (e >= 0) {
+			free(actual_message);
+		}
 		return -1;
 	}
 
+	free(actual_message);
 	free(ciphertext);
 	free(tag);
 	free(iv);
@@ -2665,6 +2721,9 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 	unsigned char* ciphertext = nullptr;
 	unsigned char* tag = nullptr;
 
+	unsigned char* msg_with_counter;
+	size_t msg_with_counter_len;
+
 	try {
 		// 1) Receive iv
 		ret_long = receive_message(server_socket, (void**)&iv);
@@ -2690,13 +2749,35 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		}
 		
 		// 4) Decrypt message
-		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, iv, iv_len, msg, msg_len);
+		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, shared_key, 
+		                      iv, iv_len, msg_with_counter, msg_with_counter_len);
 		if (ret < 0) {
 			cerr << "Error receive_plaintext: gcm decrypt failed" << endl;
 			throw 3;
 		}
 
+		// 5) Check counter against replay attack
+		uint32_t received_counter;
+		memcpy(&received_counter, msg_with_counter, sizeof(received_counter));
+		received_counter = ntohl(received_counter);
+
+		if (received_counter != server_counter) {
+			throw 4;
+		}
+		server_counter++;
+
+		// 6) Copy type + payload to msg
+		msg_len = msg_with_counter_len - sizeof(received_counter);
+		msg = (unsigned char*)malloc(msg_len);
+		if (!msg) {
+			throw 4;
+		}
+		memcpy(msg, msg_with_counter + sizeof(received_counter), msg_len);
+
 	} catch (int e) {
+		if (e >= 4) {
+			free(msg_with_counter);
+		}
 		if (e >= 3) {
 			free(tag);
 		}
@@ -2709,6 +2790,7 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 		return (ret_long == 0) ? 0 : -1; // If ret_long is 0, then socket has been closed
 	}
 
+	free(msg_with_counter);
 	free(tag);
 	free(ciphertext);
 	free(iv);

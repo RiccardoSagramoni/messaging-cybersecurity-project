@@ -352,7 +352,7 @@ int Server::prepare_for_talking (const string& username, unsigned char*& key, si
  * 
  * @return 1 on success, -1 on failure 
  */
-int Server::wait_start_talk (const string& wanted_user, const string& asking_user)
+int Server::wait_start_talk (const string& wanted_user, const string& asking_user, uint32_t& server_counter, uint32_t& client_counter)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -378,10 +378,24 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 
 	if (0 == asking_user.compare(client_data->interlocutor_user)) {
 		// Client accepted request
+		talk_lock.unlock();
+
+		// Get current counters
+		unique_lock<mutex> counter_lock(client_data->counter_mx);
+		server_counter = client_data->server_counter;
+		client_counter = client_data->client_counter;
+		counter_lock.unlock();
+
 		return 1;
 	}
 
 	talk_lock.unlock();
+
+	// Get current counters
+	unique_lock<mutex> counter_lock(client_data->counter_mx);
+	server_counter = client_data->server_counter;
+	client_counter = client_data->client_counter;
+	counter_lock.unlock();
 
 	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
 	client_data->available = true;
@@ -397,7 +411,7 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
  * 
  * @return 1 on success, -1 on failure (user not online)
  */
-int Server::wait_end_talk (const string& user)
+int Server::wait_end_talk (const string& user, uint32_t& server_counter, uint32_t& client_counter)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -421,6 +435,12 @@ int Server::wait_end_talk (const string& user)
 	}
 	end_talk_lock.unlock();
 
+	// Get current counters
+	unique_lock<mutex> counter_lock(client_data->counter_mx);
+	server_counter = client_data->server_counter;
+	client_counter = client_data->client_counter;
+	counter_lock.unlock();
+
 	// Set user as available
 	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
 	client_data->available = true;
@@ -434,10 +454,11 @@ int Server::wait_end_talk (const string& user)
  * @param wanted_user username of the client who received the request to talk
  * @param asking_user username of the client who sent the request to talk
  * @param is_accepting true if the client has accepted a request to talk, false otherwise
+ * // TODO
  * 
  * @return 1 on success, -1 on failure 
  */
-int Server::notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting)
+int Server::notify_start_talk (const string& wanted_user, const string asking_user, const bool is_accepting, const uint32_t server_counter, const uint32_t client_counter)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -453,6 +474,12 @@ int Server::notify_start_talk (const string& wanted_user, const string asking_us
 		<< "username " << wanted_user << " is not logged" << endl;
 		return -1;
 	}
+
+	// Set counters for replay attacks
+	unique_lock<mutex> counter_lock(client_data->counter_mx);
+	client_data->server_counter = server_counter;
+	client_data->client_counter = client_counter;
+	counter_lock.unlock();
 
 	// Set user as unavailable if has accepted the talk request
 	unique_lock<shared_timed_mutex> mutex_available(client_data->mutex_available);
@@ -481,7 +508,7 @@ int Server::notify_start_talk (const string& wanted_user, const string asking_us
  * 
  * @return 1 on success, -1 on error 
  */
-int Server::notify_end_talk (const string& user)
+int Server::notify_end_talk (const string& user, const uint32_t server_counter, const uint32_t client_counter)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -497,6 +524,12 @@ int Server::notify_end_talk (const string& user)
 		<< "username " << user << " is not logged" << endl;
 		return -1;
 	}
+
+	// Set counters for replay attacks
+	unique_lock<mutex> counter_lock(client_data->counter_mx);
+	client_data->server_counter = server_counter;
+	client_data->client_counter = client_counter;
+	counter_lock.unlock();
 
 	// Reset ready to talk
 	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
