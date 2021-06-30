@@ -51,8 +51,6 @@ void ServerThread::run ()
 		<< "client " << client_username << " already logged." << endl
 		<< "Closing this thread and socket " << client_socket << endl;
 
-		send_error(client_socket, ERR_ALREADY_LOGGED, client_key, true, client_username);
-
 		close(client_socket);
 
 		return;
@@ -422,10 +420,13 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 	size_t tag_len = 0;
 
 	try {
-		uint32_t counter;
+		uint32_t counter = 0;
 		ret = server->get_server_counter(username, counter);
 		if (ret != 1) {
-			throw -1;
+			// Check if we are sending an error to a non-logged client
+			//if (!(msg_len == 2 && msg[0] == SERVER_ERR && msg[1] == ERR_ALREADY_LOGGED)) {
+				throw -1;
+			//}
 		}
 
 		// Add counter against replay attack
