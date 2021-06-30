@@ -1,1 +1,0 @@
-- [C] LEAK 1 byte in input slave thread quando alice manda la richiesta di talk, finisce la talk ed esce dal server
