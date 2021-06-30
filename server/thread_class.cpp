@@ -423,10 +423,7 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		uint32_t counter = 0;
 		ret = server->get_server_counter(username, counter);
 		if (ret != 1) {
-			// Check if we are sending an error to a non-logged client
-			//if (!(msg_len == 2 && msg[0] == SERVER_ERR && msg[1] == ERR_ALREADY_LOGGED)) {
-				throw -1;
-			//}
+			throw -1;
 		}
 
 		// Add counter against replay attack

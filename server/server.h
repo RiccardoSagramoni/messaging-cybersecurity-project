@@ -255,7 +255,6 @@ public:
 
 // Type of errors (1 byte) {
 
-	#define		ERR_ALREADY_LOGGED		0x01
 	#define		ERR_WRONG_TYPE			0x02
 
 	#define 	ERR_GENERIC				0xFF
