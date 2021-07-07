@@ -147,7 +147,7 @@ class ServerThread {
 	static EVP_PKEY* get_server_private_key ();
 	static X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
-	static unsigned char* serialize_evp_pkey (EVP_PKEY* key, size_t& key_len);
+	static char* serialize_evp_pkey (EVP_PKEY* key, size_t& key_len);
 
 	static int gcm_encrypt (const unsigned char* plaintext, const int plaintext_len,
 					        const unsigned char* aad, const int aad_len, 

@@ -968,7 +968,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 										const string& username)
 {
 	int ret;
-	long ret_long;
 
 	unsigned char* iv = nullptr;
 	unsigned char* ciphertext = nullptr;
@@ -976,7 +975,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 	unsigned char* client_signature = nullptr;
 	size_t client_signature_len = 0;
 
-	BIO* mbio = nullptr;
 	unsigned char* my_key_buf = nullptr;
 	size_t my_key_len = 0;
 	unsigned char* peer_key_buf = nullptr;
@@ -1013,45 +1011,15 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		}
 		// 2) Serialize g**b (server's DH key) and g**a (client's DH key).
 		// Then concatenate them.
-		// 2a) Serialize server's key (g**b)
-		mbio = BIO_new(BIO_s_mem());
-		if (!mbio) {
+		// 2a) Serialize server key
+		my_key_buf = (unsigned char*)serialize_evp_pkey(my_dh_key, my_key_len);
+		if (!my_key_buf) {
 			throw 3;
 		}
-		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
-		if (ret != 1) {
-			throw 4;
-		}
-		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
-		if (ret_long <= 0) {
-			throw 4;
-		}
-		my_key_len = ret_long;
-		my_key_buf = (unsigned char*)malloc(my_key_len);
-		if (!my_key_buf) {
-			throw 4;
-		}
-		ret = BIO_read(mbio, my_key_buf, my_key_len);
-		if (ret < 1) {
-			throw 5;
-		}
 		// 2b) Serialize peer key
-		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
-		if (ret != 1) {
-			throw 5;
-		}
-		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
-		if (ret_long <= 0) {
-			throw 5;
-		}
-		peer_key_len = ret_long;
-		peer_key_buf = (unsigned char*)malloc(peer_key_len);
+		peer_key_buf = (unsigned char*)serialize_evp_pkey(peer_key, peer_key_len);
 		if (!peer_key_buf) {
 			throw 5;
-		}
-		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
-		if (ret < 1) {
-			throw 6;
 		}
 
 		// Check integer overflow
@@ -1099,9 +1067,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 		if (e >= 5) {
 			secure_free(my_key_buf, my_key_len);
 		}
-		if (e >= 4) {
-			BIO_free(mbio);
-		}
 		if (e >= 3) {
 			free(tag);
 		}
@@ -1118,7 +1083,6 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 	secure_free(concat_keys, concat_keys_len);
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_key_buf, my_key_len);
-	BIO_free(mbio);
 	free(tag);
 	free(ciphertext);
 	free(iv);
@@ -1215,10 +1179,8 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 {
 
 	int ret;
-	long ret_long;
 
 	// Declare variable for DH key serialization and encryption
-	BIO* mbio = nullptr;
 	char* my_key_buf = nullptr;
 	uint32_t my_key_len = 0;
 	char* peer_key_buf = nullptr;
@@ -1234,71 +1196,27 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 	long ser_certificate_len = 0;
 
 	try {
+		// Prepare string < g**b, g**a > for signature
 		// 1) Serialize server's key (g**b)
-		mbio = BIO_new(BIO_s_mem());
-		if (!mbio) {
+		size_t temp_my_key_len;
+		my_key_buf = serialize_evp_pkey(my_dh_key, temp_my_key_len);
+		if (!my_key_buf || temp_my_key_len > numeric_limits<uint32_t>::max()) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "BIO_new failed" << endl;
+			<< "serialize_evp_pkey my_dh_key failed" << endl;
 			throw 0;
 		}
+		my_key_len = temp_my_key_len;
 
-		ret = PEM_write_bio_PUBKEY(mbio, my_dh_key);
-		if (ret != 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
-			throw 1;
-		}
-
-		ret_long = BIO_get_mem_data(mbio, &my_key_buf);
-		if (ret_long <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "BIO_get_mem_data returned " << ret_long << endl;
-			throw 1;
-		}
-		my_key_len = (uint32_t)ret_long;
-		my_key_buf = (char*)malloc(my_key_len);
-		if (!my_key_buf) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "malloc buffer for server's DH key failed" << endl;
-			throw 1;
-		}
-		ret = BIO_read(mbio, my_key_buf, my_key_len);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "BIO_read returned " << ret << endl;
-			throw 2;
-		}
 		
-
-		// 2) Prepare string < g**b, g**a > for signature
-		// 2a) Serialize peer key
-		ret = PEM_write_bio_PUBKEY(mbio, peer_key);
-		if (ret != 1) {
+		// 2) Serialize peer key
+		size_t temp_peer_key_len;
+		peer_key_buf = serialize_evp_pkey(peer_key, temp_peer_key_len);
+		if (!my_key_buf || temp_peer_key_len > numeric_limits<uint32_t>::max()) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
-			throw 2;
+			<< "serialize_evp_pkey peer_key failed" << endl;
+			throw 1;
 		}
-
-		ret_long = BIO_get_mem_data(mbio, &peer_key_buf);
-		if (ret_long <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "BIO_get_mem_data returned " << ret_long << endl;
-			throw 2;
-		}
-		peer_key_len = (uint32_t)ret_long;
-		peer_key_buf = (char*)malloc(peer_key_len);
-		if (!my_key_buf) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "malloc buffer for client's DH key failed" << endl;
-			throw 2;
-		}
-		ret = BIO_read(mbio, peer_key_buf, peer_key_len);
-		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
-			<< "BIO_read returned " << ret << endl;
-			throw 3;
-		}
-
+		peer_key_len = temp_peer_key_len;
 
 		// Check integer overflow.
 		// peer_key_len's length is fixed to 4 bytes (uint32_t), but according to 
@@ -1413,11 +1331,8 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 		if (e >= 3) {
 			secure_free(peer_key_buf, peer_key_len);
 		}
-		if (e >= 2) {
-			secure_free(my_key_buf, my_key_len);
-		}
 		if (e >= 1) {
-			BIO_free(mbio);
+			secure_free(my_key_buf, my_key_len);
 		}
 		return -1;
 	}
@@ -1429,7 +1344,7 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 	secure_free(tag, tag_len);
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_key_buf, my_key_len);
-	BIO_free(mbio);
+
 	return 1;
 }
 
@@ -1851,13 +1766,13 @@ EVP_PKEY* ServerThread::get_client_public_key (const string& username)
  * 
  * @return serialized key on success, NULL on failure
  */
-unsigned char* ServerThread::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
+char* ServerThread::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
 {
 	int ret;
 	long ret_long;
 
 	BIO* mbio = nullptr;
-	unsigned char* key_buf = nullptr;
+	char* key_buf = nullptr;
 
 	try {
 		// 1) Allocate BIO for serialization
@@ -1886,7 +1801,7 @@ unsigned char* ServerThread::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
 		key_len = (uint32_t)ret_long;
 		
 		// 4) Allocate memory for serialized key
-		key_buf = (unsigned char*)malloc(key_len);
+		key_buf = (char*)malloc(key_len);
 		if (!key_buf) {
 			cerr << "[Thread " << this_thread::get_id() << "] serialize_evp_pkey: "
 			<< "malloc buffer for serialized key failed" << endl;
@@ -2267,7 +2182,7 @@ int ServerThread::send_public_key_for_talk (const string& username, const int so
 		
 		// 2) Serialize public key
 		size_t ser_peer_pubkey_len = 0;
-		ser_peer_pubkey = serialize_evp_pkey(peer_pubkey, ser_peer_pubkey_len);
+		ser_peer_pubkey = (unsigned char*)serialize_evp_pkey(peer_pubkey, ser_peer_pubkey_len);
 		if (!ser_peer_pubkey) {
 			throw 1;
 		}
