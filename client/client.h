@@ -151,8 +151,8 @@ class Client {
 	int send_message_to_client(unsigned char* clients_session_key);
 	int send_end_talking_message();
 	void receive_message_from_client(unsigned char* clients_session_key, int* return_value);
-	int negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len);
-	int negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len, EVP_PKEY* peer_pukey);
+	int negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len, EVP_PKEY* peer_pukey);
 	int accept_request_to_talk(string peer_username);
 	int reject_request_to_talk(string peer_username);
 
