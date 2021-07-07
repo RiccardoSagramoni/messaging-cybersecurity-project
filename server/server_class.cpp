@@ -544,7 +544,7 @@ int Server::set_talk_exit_status(const string& username, const int status)
 
 /**
  * Check if counter against replay attack is valid
- * @return 1 if counter is valid, 0 if counter is not valid, -1 if username doesn't exists
+ * @return 1 if counter is valid, 0 if counter is not valid, -1 if username doesn't exists or counter overflows
  */
 int Server::check_client_counter(const string& username, const uint32_t counter)
 {
@@ -566,13 +566,18 @@ int Server::check_client_counter(const string& username, const uint32_t counter)
 	unique_lock<mutex> lock(client_data->counter_mx);
 	bool ret = (counter == client_data->client_counter);
 	client_data->client_counter++;
+	
+	// Check overflow of counter
+	if (client_data->client_counter == 0) {
+		return -1;
+	}
 
 	return (ret) ? 1 : 0;
 }
 
 /**
  * Get counter against replay attack
- * @return 1 on success, -1 if username doesn't exists
+ * @return 1 on success, -1 if username doesn't exists or counter overflows
  */
 int Server::get_server_counter(const string& username, uint32_t& counter)
 {
@@ -594,5 +599,11 @@ int Server::get_server_counter(const string& username, uint32_t& counter)
 	unique_lock<mutex> lock(client_data->counter_mx);
 	counter = client_data->server_counter;
 	client_data->server_counter++;
+
+	// Check overflow of counter
+	if (client_data->client_counter == 0) {
+		return -1;
+	}
+
 	return 1;
 }

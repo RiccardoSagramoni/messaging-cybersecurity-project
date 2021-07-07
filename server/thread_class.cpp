@@ -426,16 +426,20 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 			throw -1;
 		}
 
-		// Add counter against replay attack
+		// Check integer overflow
+		if (msg_len > numeric_limits<size_t>::max() - sizeof(counter)) {
+			throw -1;
+		}
 		size_t actual_message_len = sizeof(counter) + msg_len;
+
+		// Add counter against replay attack
 		actual_message = (unsigned char*)malloc(actual_message_len);
 		if (!actual_message) {
 			throw -1;
 		}
-		uint32_t temp_counter = htonl(counter);
-		memcpy(actual_message, &temp_counter, sizeof(temp_counter));
-		memcpy(actual_message + sizeof(temp_counter), msg, msg_len);
-		counter++;
+		counter = htonl(counter);
+		memcpy(actual_message, &counter, sizeof(counter));
+		memcpy(actual_message + sizeof(counter), msg, msg_len);
 		
 		// 1) Generate IV
 		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
@@ -1050,8 +1054,15 @@ int ServerThread::STS_receive_response (unsigned char* shared_key, size_t shared
 			throw 6;
 		}
 
-		// 2c) Concat peer_key and my_key
+		// Check integer overflow
+		if (peer_key_len > numeric_limits<size_t>::max() -1 ||
+			my_key_len > numeric_limits<size_t>::max() - 1 - peer_key_len)
+		{
+			throw 6;
+		}
 		concat_keys_len = my_key_len + peer_key_len + 1;
+		
+		// 2c) Concat peer_key and my_key
 		concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
 			throw 6;
@@ -1288,8 +1299,19 @@ int ServerThread::STS_send_session_key (unsigned char* shared_key, size_t shared
 			throw 3;
 		}
 
-		// 2b) Concat my_key and peer_key
+
+		// Check integer overflow.
+		// peer_key_len's length is fixed to 4 bytes (uint32_t), but according to 
+		// C++11 standard size_t must be at least 2 bytes (usually is 4-8 bytes),
+		// so we have to check if peer_key_len can "downgrade"
+		if (peer_key_len > numeric_limits<size_t>::max() - 1 || 
+			my_key_len > numeric_limits<size_t>::max() - 1 - (size_t)peer_key_len) 
+		{
+			throw 3;
+		}
 		size_t concat_keys_len = my_key_len + peer_key_len + 1;
+
+		// 2b) Concat my_key and peer_key
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
 			cerr << "[Thread " << this_thread::get_id() << "] STS_send_session_key: "
@@ -1439,8 +1461,15 @@ int ServerThread::gcm_encrypt (const unsigned char* plaintext, const int plainte
 	EVP_CIPHER_CTX* ctx;
 	
 	try {
+		// Check integer overflow for malloc size
+		int block_size = EVP_CIPHER_block_size(get_authenticated_encryption_cipher());
+		if (plaintext_len < 0 || block_size < 0 ||
+			plaintext_len > numeric_limits<int>::max() - block_size) {
+			throw 0;
+		}
+
 		// Allocate ciphertext
-		ciphertext = (unsigned char*)malloc(plaintext_len + EVP_CIPHER_block_size(get_authenticated_encryption_cipher()));
+		ciphertext = (unsigned char*)malloc(plaintext_len + block_size);
 		if (!ciphertext) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "malloc ciphertext failed" << endl;
@@ -1492,6 +1521,10 @@ int ServerThread::gcm_encrypt (const unsigned char* plaintext, const int plainte
 			ERR_print_errors_fp(stderr);
 			throw 4;
 		}
+
+		if (outlen < 0 || outlen > numeric_limits<size_t>::max()) {
+			throw 4;
+		}
 		ciphertext_len = outlen;
 
 		// Finalize Encryption
@@ -1500,6 +1533,12 @@ int ServerThread::gcm_encrypt (const unsigned char* plaintext, const int plainte
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_encrypt: "
 			<< "EVP_EncryptFinal returned " << ret << endl;
 			ERR_print_errors_fp(stderr);
+			throw 4;
+		}
+
+		if (outlen < 0 || outlen > numeric_limits<size_t>::max() ||
+			ciphertext_len > numeric_limits<size_t>::max() - outlen) 
+		{
 			throw 4;
 		}
 		ciphertext_len += outlen;
@@ -1599,6 +1638,10 @@ int ServerThread::gcm_decrypt (const unsigned char* ciphertext, const int cipher
 			<< "EVP_DecryptUpdate plaintext failed" << endl;
 			throw 2;
 		}
+
+		if (outlen < 0 || outlen > numeric_limits<size_t>::max()) {
+			throw 2;
+		}
 		plaintext_len = outlen;
 
 		// Set expected tag value
@@ -1615,6 +1658,11 @@ int ServerThread::gcm_decrypt (const unsigned char* ciphertext, const int cipher
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] gcm_decrypt: "
 			<< "EVP_DecryptFinal returned " << ret << endl;
+			throw 2;
+		}
+
+		if (outlen < 0 || outlen > numeric_limits<size_t>::max() ||
+			plaintext_len > numeric_limits<size_t>::max() - outlen) {
 			throw 2;
 		}
 		plaintext_len += outlen;
@@ -1894,6 +1942,13 @@ int ServerThread::execute_show ()
 	// 2a) Calculate necessary space
 	size_t message_len = 1;
 	for (auto s : l) {
+		// Check overflow
+		if (s.length() > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) ||
+			message_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - s.length())
+		{
+			return -1;
+		}
+
 		message_len += (sizeof(uint32_t) + s.length() + 1);
 	}
 
@@ -1910,7 +1965,7 @@ int ServerThread::execute_show ()
 
 	for (auto s: l) {
 		// a) Insert username length
-		uint32_t string_size = s.length() + 1;
+		uint32_t string_size = s.length() + 1; // Possible Int overflows have been already checked!
 		string_size = htonl(string_size);
 		memcpy(message + pos, &string_size, sizeof(string_size));
 		pos += sizeof(string_size);
@@ -1958,7 +2013,9 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 		// Deserialize length of username
 		uint32_t peer_username_len = ntohl(*(uint32_t*)(msg + 1));
 
-		if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
+		if (peer_username_len > numeric_limits<uint32_t>::max() - 1 - sizeof(uint32_t) ||
+			msg_len != sizeof(uint32_t) + 1 + peer_username_len) 
+		{
 			send_error(client_socket, SERVER_ERR, client_key, false, client_username);
 			throw 0;
 		}
@@ -2070,6 +2127,12 @@ int ServerThread::send_request_to_talk (const int socket, const string& from_use
 {
 	int ret;
 	
+	if (from_user.length() > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] send_request_to_talk: "
+		<<  "integer overflow" << endl;
+		return -1;
+	}
+
 	// Message: SERVER_REQUEST_TO_TALK (1) | username_len (4) | username (?)
 	size_t msg_len = 1 + sizeof(uint32_t) + from_user.length() + 1;
 	unsigned char* msg = (unsigned char*)malloc(msg_len);
@@ -2293,7 +2356,10 @@ int ServerThread::execute_accept_talk (const unsigned char* msg, const size_t ms
 		memcpy(&len, msg + 1, sizeof(len));
 		len = ntohl(len);
 
-		if (msg_len < 1 + sizeof(len) + len) {
+		if (len > numeric_limits<size_t>::max() ||
+			(size_t)len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) || 
+			msg_len < 1 + sizeof(len) + (size_t)len) 
+		{
 			return -1;
 		}
 
