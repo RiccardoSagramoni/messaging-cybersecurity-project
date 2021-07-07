@@ -147,6 +147,7 @@ class ServerThread {
 	static EVP_PKEY* get_server_private_key ();
 	static X509* get_server_certificate ();
 	static EVP_PKEY* get_client_public_key(const string& username);
+	static unsigned char* serialize_evp_pkey (EVP_PKEY* key, size_t& key_len);
 
 	static int gcm_encrypt (const unsigned char* plaintext, const int plaintext_len,
 					        const unsigned char* aad, const int aad_len, 
@@ -193,7 +194,7 @@ class ServerThread {
 	// Talk {
 
 	int send_request_to_talk (const int socket, const string& from_user, const string& to_user, const unsigned char* key);
-	int send_notification_for_accepted_talk_request();
+	int send_public_key_for_talk (const string& username, const int socket, const unsigned char* key, const string& peer_username);
 	int negotiate_key_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
 	int talk_between_clients (const string& peer_username, const int peer_socket, const unsigned char* peer_key);
 	void talk (const string& src_username, const int src_socket, const unsigned char* src_key, const string& dest_username, const int dest_socket, const unsigned char* dest_key, atomic<int>* return_value);

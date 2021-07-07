@@ -1843,6 +1843,79 @@ EVP_PKEY* ServerThread::get_client_public_key (const string& username)
 	return prvkey;
 }
 
+/**
+ * Serialize an EVP_PKEY structure
+ * 
+ * @param key key to serialize
+ * @param key_len on success, length of serialized key
+ * 
+ * @return serialized key on success, NULL on failure
+ */
+unsigned char* ServerThread::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
+{
+	int ret;
+	long ret_long;
+
+	BIO* mbio = nullptr;
+	unsigned char* key_buf = nullptr;
+
+	try {
+		// 1) Allocate BIO for serialization
+		mbio = BIO_new(BIO_s_mem());
+		if (!mbio) {
+			cerr << "[Thread " << this_thread::get_id() << "] serialize_evp_pkey: "
+			<< "BIO_new failed" << endl;
+			throw 0;
+		}
+
+		// 2) Serialize key
+		ret = PEM_write_bio_PUBKEY(mbio, key);
+		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] serialize_evp_pkey: "
+			<< "PEM_write_bio_PUBKEY returned " << ret << endl;
+			throw 1;
+		}
+
+		// 3) Get serialized length
+		ret_long = BIO_get_mem_data(mbio, &key_buf);
+		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] serialize_evp_pkey: "
+			<< "BIO_get_mem_data returned " << ret_long << endl;
+			throw 1;
+		}
+		key_len = (uint32_t)ret_long;
+		
+		// 4) Allocate memory for serialized key
+		key_buf = (unsigned char*)malloc(key_len);
+		if (!key_buf) {
+			cerr << "[Thread " << this_thread::get_id() << "] serialize_evp_pkey: "
+			<< "malloc buffer for serialized key failed" << endl;
+			throw 1;
+		}
+
+		// 5) Extract serialized key
+		ret = BIO_read(mbio, key_buf, key_len);
+		if (ret < 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] serialize_evp_pkey: "
+			<< "BIO_read returned " << ret << endl;
+			throw 2;
+		}
+	
+	} catch (int e) {
+		if (e >= 2) {
+			secure_free(key_buf, key_len);
+		}
+		if (e >= 1) {
+			BIO_free(mbio);
+		}
+		return nullptr;
+	}
+
+	BIO_free(mbio);
+
+	return key_buf;
+}
+
 
 
 /**
@@ -2068,8 +2141,14 @@ int ServerThread::execute_talk (const unsigned char* msg, const size_t msg_len)
 			throw 5;
 		}
 
-		// 6) Notify first client
-		ret = send_notification_for_accepted_talk_request();
+		// 6) Send to both clients the public key of the other client
+		ret = send_public_key_for_talk(client_username, client_socket, client_key, peer_username);
+		if (ret != 1) {
+			return_value = -1;
+			throw 7;
+		}
+
+		ret = send_public_key_for_talk(peer_username, peer_socket, peer_key, client_username);
 		if (ret != 1) {
 			return_value = -1;
 			throw 7;
@@ -2159,15 +2238,72 @@ int ServerThread::send_request_to_talk (const int socket, const string& from_use
 }
 
 /**
- * Notify client that its request to talk has been accepted
+ * Send to a client the public key of the other client, in order to negotiate a
+ * session key client-to-client for the talk
  * 
- * @return 1 on success, -1 on failure 
+ * @param username user who receives the message
+ * @param socket socket through we send the message
+ * @param key sessione key of receiving client
+ * @param peer_username user who owns the public key
+ * 
+ * @return 1 on success, -1 on failure
  */
-int ServerThread::send_notification_for_accepted_talk_request ()
+int ServerThread::send_public_key_for_talk (const string& username, const int socket, 
+		const unsigned char* key, const string& peer_username)
 {
-	const unsigned char msg[1] = {SERVER_OK};
+	int ret;
+	
+	EVP_PKEY* peer_pubkey = nullptr;
+	unsigned char* ser_peer_pubkey = nullptr;
+	unsigned char* msg = nullptr;
+	size_t msg_len = 0;
 
-	return send_plaintext(client_socket, msg, 1, client_key, client_username);
+	try {
+		// 1) Get public key of the other client
+		peer_pubkey = get_client_public_key(peer_username);
+		if (!peer_pubkey) {
+			throw 0;
+		}
+		
+		// 2) Serialize public key
+		size_t ser_peer_pubkey_len = 0;
+		ser_peer_pubkey = serialize_evp_pkey(peer_pubkey, ser_peer_pubkey_len);
+		if (!ser_peer_pubkey) {
+			throw 1;
+		}
+
+		// 3) Check integer overflow
+		if (ser_peer_pubkey_len > numeric_limits<size_t>::max() - 1) {
+			throw 2;
+		}
+		msg_len = 1 + ser_peer_pubkey_len;
+
+		// 4) Prepare message
+		msg = (unsigned char*)malloc(msg_len);
+		if (!msg) {
+			throw 2;
+		}
+
+		msg[0] = SERVER_OK;
+		memcpy(msg + 1, ser_peer_pubkey, ser_peer_pubkey_len);
+
+	} catch (int e) {
+		if (e >= 2) {
+			free(ser_peer_pubkey);
+		}
+		if (e >= 1) {
+			EVP_PKEY_free(peer_pubkey);
+		}
+		return -1;
+	}
+
+	ret = send_plaintext(socket, msg, 1, key, username);
+
+	free(msg);
+	free(ser_peer_pubkey);
+	EVP_PKEY_free(peer_pubkey);
+
+	return ret;
 }
 
 /**
@@ -2201,7 +2337,7 @@ int ServerThread::negotiate_key_between_clients (const string& peer_username, co
 		return -1;
 	}
 
-	// 3) Receive g**b from client B
+	// 3) Receive g**b + encrypted sign of <g**b, g**a> from client B
 	unsigned char* key_gb;
 	size_t key_gb_len;
 	ret = receive_plaintext(peer_socket, key_gb, key_gb_len, peer_key, peer_username);
@@ -2211,12 +2347,31 @@ int ServerThread::negotiate_key_between_clients (const string& peer_username, co
 		return -1;
 	}
 
-	// 4) Send g**b to client A
+	// 4) Send g**b + encrypted sign of <g**b, g**a> to client A
 	ret = send_plaintext(client_socket, key_gb, key_gb_len, client_key, client_username);
 	secure_free(key_gb, key_gb_len);
 	if (ret != 1) {
 		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
-		<< "send_plaintext g**b to client A failed" << endl;
+		<< "send_plaintext g**b  + encrypted sign of <g**b, g**a> to client A failed" << endl;
+		return -1;
+	}
+
+	// 5) Receive encrypted sign of <g**a, g**b> from client A
+	unsigned char* final_sign;
+	size_t final_sign_len;
+	ret = receive_plaintext(client_socket, final_sign, final_sign_len, client_key, client_username);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
+		<< "receive_plaintext encrypted sign of <g**a, g**b> from client B failed" << endl;
+		return -1;
+	}
+
+	// 6) Send encrypted sign of <g**a, g**b> 
+	ret = send_plaintext(peer_socket, final_sign, final_sign_len, peer_key, peer_username);
+	secure_free(final_sign, final_sign_len);
+	if (ret != 1) {
+		cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_between_clients: "
+		<< "send_plaintext encrypted sign of <g**a, g**b>  from client B failed" << endl;
 		return -1;
 	}
 
