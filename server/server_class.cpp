@@ -579,7 +579,7 @@ int Server::check_client_counter(const string& username, const uint32_t counter)
  * Get counter against replay attack
  * @return 1 on success, -1 if username doesn't exists or counter overflows
  */
-int Server::get_server_counter(const string& username, uint32_t& counter)
+int Server::get_server_counter(const string& username, uint32_t& counter) // TODO check error recovery
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
