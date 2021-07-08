@@ -2578,7 +2578,7 @@ char* Client::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
  * 
  * @return deserialized key on success, NULL on failure
  */
-EVP_PKEY* deserialize_evp_pkey (const char* key_buf, const size_t key_len)
+EVP_PKEY* Client::deserialize_evp_pkey (const char* key_buf, const size_t key_len)
 {
 	int ret;
 	BIO* mbio;
