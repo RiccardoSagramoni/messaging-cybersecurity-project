@@ -110,7 +110,7 @@ class Client {
 	EVP_PKEY* get_client_private_key();
 	static char* serialize_evp_pkey (EVP_PKEY* key, size_t& key_len);
 	static EVP_PKEY* deserialize_evp_pkey (const char* key, const size_t key_len);
-	EVP_PKEY* receive_publich_key_client_from_server(string peer_username);
+	int receive_publich_key_client_from_server(string peer_username, EVP_PKEY*& peer_pubkey);
 	X509* get_CA_certificate();
 	X509_CRL* get_crl();
 

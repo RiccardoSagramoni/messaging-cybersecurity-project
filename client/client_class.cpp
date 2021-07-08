@@ -377,7 +377,7 @@ int Client::talk ()
 		return -1;
 	}
 	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
-	if (ret = 0) {
+	if (ret == 0) {
 		return 1;
 	}
 	else if(ret<0) {
@@ -1005,7 +1005,7 @@ int Client::accept_request_to_talk(string peer_username)
 	}
 
 	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
-	if (ret = 0) {
+	if (ret == 0) {
 		return 1;
 	}
 	if (ret < 0) {
