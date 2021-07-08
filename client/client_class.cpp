@@ -336,9 +336,6 @@ int Client::talk ()
 	char* message = nullptr;
 	size_t message_len = 1;
 	string peer_username;
-	unsigned char* plaintext = nullptr;
-	size_t plaintext_len = 0;
-	BIO* mem_bio = nullptr;
 	EVP_PKEY* peer_pubkey = nullptr;
 	
 	//get user to talk
@@ -379,10 +376,13 @@ int Client::talk ()
 		<< "error send message to server" << endl;
 		return -1;
 	}
-	peer_pubkey = receive_publich_key_client_from_server(peer_username);
-	if (!peer_pubkey) {
+	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
+	if (ret = 0) {
+		return 1;
+	}
+	else if(ret<0) {
 		cerr << "[Thread " << this_thread::get_id() << "] talk: "
-		<< "receive public key" << endl;
+		<< "error receive message to server" << endl;
 		return -1;
 	}
 
@@ -1004,10 +1004,13 @@ int Client::accept_request_to_talk(string peer_username)
 		return -1;
 	}
 
-	peer_pubkey = receive_publich_key_client_from_server(peer_username);
-	if (!peer_pubkey) {
+	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
+	if (ret = 0) {
+		return 1;
+	}
+	if (ret < 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
-		<< "error send message to server for accept" << endl;
+		<< "error receive message from server" << endl;
 		return -1;
 	}
 
@@ -3305,20 +3308,19 @@ int Client::check_directory_traversal (const char* file_name) {
 
 
 
-EVP_PKEY* Client::receive_publich_key_client_from_server(string peer_username) {
+int Client::receive_publich_key_client_from_server(string peer_username, EVP_PKEY*& peer_pubkey) {
 
 	int ret = 0;
 	unsigned char* plaintext = nullptr;
 	size_t plaintext_len = 0;
 	BIO* mem_bio = nullptr;
-	EVP_PKEY* peer_pubkey = nullptr;
 
 	// Receive public key from server
 	plaintext = bridge.wait_for_new_message(plaintext_len);
 	if (!plaintext) {
 		cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
 		<< "error receive plaintext" << endl;
-		return nullptr;
+		return -1;
 	}
 	// Extract message type
 	uint8_t message_type = get_message_type(plaintext);
@@ -3326,11 +3328,11 @@ EVP_PKEY* Client::receive_publich_key_client_from_server(string peer_username) {
 
 	if (message_type == SERVER_ERR) {
 		cout << "User " << peer_username << " has refused your request" << endl << endl;
-		return nullptr;
+		return 0;
 	}
 	else if (message_type == SERVER_OK) {
 		if (plaintext_len < 2) {
-			return nullptr;
+			return -1;
 		}
 
 		// 1) Get peer public key (deserialize)
@@ -3338,23 +3340,23 @@ EVP_PKEY* Client::receive_publich_key_client_from_server(string peer_username) {
 		if (!mem_bio) {
 			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
 			<< "error bio_new" << endl;
-			return nullptr;
+			return -1;
 		}
 		
 		ret = BIO_write(mem_bio, plaintext + 1, plaintext_len - 1);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
 			<< "error bio_write" << endl;
-			return nullptr;
+			return -1;
 		}
 
 		peer_pubkey = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
 		if (!peer_pubkey) {
 			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
 			<< "error pem read" << endl;
-			return nullptr;
+			return -1;
 		}
-		return peer_pubkey;
+		return 1;
 	}
-	return nullptr;
+	return -1;
 }
