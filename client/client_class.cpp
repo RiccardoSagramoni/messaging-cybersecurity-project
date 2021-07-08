@@ -394,7 +394,9 @@ int Client::talk ()
 		return 1;
 	}
 	else if (message_type == SERVER_OK) {
-		// TODO controlla dimensione messaggio
+		if (plaintext_len < 2) {
+			return -1;
+		}
 
 		// 1) Get peer public key (deserialize)
 		mem_bio = BIO_new(BIO_s_mem());
@@ -473,7 +475,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 	BIO* mem_bio = nullptr;
 	unsigned char* peer_DH_key_buf = nullptr;
-	size_t peer_DH_key_len = 0;
+	uint32_t peer_DH_key_len = 0;
 	EVP_PKEY* peer_DH_key = nullptr;
 	
 	unsigned char* ciphertext = nullptr;
@@ -544,12 +546,20 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
 
-		// TODO allocate DH client key
-		// TODO estrarre len key
-		peer_DH_key_len = my_pubkey_size; // no
+
+
+		
+		memcpy(&peer_DH_key_len, plaintext_from_server, sizeof(peer_DH_key_len));
+		peer_DH_key_len = ntohl(peer_DH_key_len);
+
+		
+		peer_DH_key_buf = (unsigned char*)malloc(peer_DH_key_len);
+	
+
+	
 		memcpy(&peer_DH_key_buf, plaintext_from_server, peer_DH_key_len);
 		size_t iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
-		ciphertext_len = plaintext_from_server_len - iv_len - TAG_SIZE - peer_DH_key_len; // no	
+		ciphertext_len = plaintext_from_server_len - iv_len - TAG_SIZE - peer_DH_key_len - sizeof(peer_DH_key_len); // no	
 
 
 
@@ -567,21 +577,21 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		if (!mem_bio) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "error bio_new" << endl;
-			throw 4;
+			throw 3;
 		}
 		
 		ret = BIO_write(mem_bio, peer_DH_key_buf, peer_DH_key_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "error bio_write" << endl;
-			throw 5;
+			throw 3;
 		}
 
 		peer_DH_key = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
 		if (!peer_DH_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "error pem read" << endl;
-			throw 5;
+			throw 3;
 		}
 
 
@@ -591,7 +601,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		if (!clients_session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "error derive session key" << endl;
-			throw 6;
+			throw 3;
 		}
 
 
@@ -604,16 +614,33 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		ret = gcm_decrypt(plaintext_from_server + sizeof(uint32_t) + peer_DH_key_len + iv_len, ciphertext_len, plaintext_from_server + sizeof(uint32_t) + peer_DH_key_len, iv_len, plaintext_from_server + sizeof(uint32_t) + peer_DH_key_len + iv_len + ciphertext_len, clients_session_key, plaintext_from_server + sizeof(uint32_t) + peer_DH_key_len, iv_len, message, message_len); // TODO ricontrolla offset
 
 		if (ret < 0) {
-			return -1; 
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
+			<< "error decrypt received sign" << endl;
+			throw 3;
 		}
 
-		// TODO concatena chiavi per signature
-		// TODO verify server signature
+
+
+		// <g**b, g**a>
+		size_t concat_keys_receive_len = my_pubkey_size + peer_DH_key_len + 1;
+		unsigned char* concat_keys_receive = (unsigned char*)malloc(concat_keys_receive_len);
+		if (!concat_keys_receive) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
+			<< "malloc concat_keys failed" << endl;
+			throw 3;
+		}
+
+		memcpy(concat_keys_receive, peer_DH_key_buf, peer_DH_key_len);
+		memcpy(concat_keys_receive + peer_DH_key_len, my_pubkey_buf, my_pubkey_size);
+		concat_keys_receive[concat_keys_receive_len - 1] = '\0';
+
+
+		ret = verify_signature(message, message_len, concat_keys_receive, concat_keys_receive_len, peer_pukey);
 		//ret = verify_signature(plaintext_from_server + )
 		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "error verifying server sign" << endl;
-			throw 14;
+			throw 3;
 		}
 
 
@@ -622,8 +649,8 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		size_t concat_keys_len = my_pubkey_size + peer_DH_key_len + 1;
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
-			<< "malloc concat_keys failed" << endl;
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
+			<< "error concat key" << endl;
 			throw 3;
 		}
 
@@ -636,7 +663,11 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		signature = sign_message(concat_keys, concat_keys_len, signature_len);
 		secure_free(concat_keys, concat_keys_len);
 		
-		// TODO check singature NULL
+		if (!signature) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
+			<< "error signature to be sent" << endl;
+			throw 3;
+		}
 		
 
 
@@ -646,13 +677,13 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		unsigned char* tag = nullptr;
 		size_t tag_len = 0;
 		if (!iv) {
-			throw 0;
+			throw 4;
 		}
 
 		// 3b) Encrypt message
 		ret = gcm_encrypt(signature, signature_len, iv, iv_len, clients_session_key, iv, iv_len, signature_ci, signature_ci_len, tag, tag_len);
 		if (ret < 0) {
-			throw 1;
+			throw 4;
 		}
 
 
@@ -660,7 +691,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		final_ciphertext_len = iv_len + signature_ci_len + tag_len; // TODO overflow
 		final_ciphertext = (unsigned char*)malloc(final_ciphertext_len);
 		if (!final_ciphertext) {
-			throw 2;
+			throw 4;
 		}
 
 		memcpy(final_ciphertext, iv, iv_len);
@@ -671,9 +702,9 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 		ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, session_key);
 		if (ret < 1) {
-			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "error sending pub key" << endl;
-			throw 6;
+			throw 4;
 		}
 		
 		
@@ -682,14 +713,12 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		
 
 	} catch (int e) {
-		if (e >= 6) {
+		if (e >= 4) {
 			EVP_PKEY_free(peer_DH_key);
 		}
-		if (e >= 5) {
-			BIO_free(mem_bio);
-		}
-		if (e >= 4) {
+		if (e >= 3) {
 			secure_free(peer_DH_key_buf, peer_DH_key_len);
+			BIO_free(mem_bio);
 		}
 		if (e >= 2) {
 			BIO_free(mbio);
@@ -720,9 +749,6 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 {
 	int ret;
 	
-	BIO* my_bio = nullptr;
-	BIO* peer_bio = nullptr;
-
 	EVP_PKEY* my_dh_key = nullptr;
 	char* my_dh_key_buf = nullptr;
 	size_t my_dh_key_len = 0;
@@ -748,6 +774,7 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 
 
 	try {
+		// EXECUTE STS PROTOCOL BETWEEN CLIENTS
 		// 1) Generate g**b
 		my_dh_key = generate_key_dh();
 		if (!my_dh_key) {
@@ -757,33 +784,14 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		}
 
 		// 2) Serialize g**b
-		// 2a) Allocate bio
-		my_bio = BIO_new(BIO_s_mem());
-		if (!my_bio) {
+		my_dh_key_buf = serialize_evp_pkey(my_dh_key, my_dh_key_len);
+		if (!my_dh_key_buf) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "error bio_new" << endl;
+			<< "error serialize_evp_pkey" << endl;
 			throw 1;
 		}
 
-		// 2b) Write on bio
-		ret = PEM_write_bio_PUBKEY(my_bio, my_dh_key);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "error write bio" << endl;
-			throw 2;
-		}
-		
-		// 2c) Read from bio
-		long ret_long = BIO_get_mem_data(my_bio, &my_dh_key_buf);
-		if (ret_long <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "error get mem bio pub key" << endl;
-			throw 2;
-		}
-		my_dh_key_len = ret_long;
-
-
-		// 3) Receive g**a and deserialize it
+		// 3) Receive g**a from master (M1 STS protocol)
 		peer_key_buf = bridge.wait_for_new_message(peer_key_len);
 		if (!peer_key_buf) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
@@ -791,30 +799,13 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 			throw 2;
 		}
 		
-		// 3a) Allocate bio
-		peer_bio = BIO_new(BIO_s_mem());
-		if (!peer_bio) {
-			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "error bio_new" << endl;
-			throw 4;
-		}
-		
-		// 3b) Insert serialized key in bio
-		ret = BIO_write(peer_bio, peer_key_buf, peer_key_len);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "error bio_write" << endl;
-			throw 5;
-		}
-
-		// 3c) Deserialize g**a
-		peer_key = PEM_read_bio_PUBKEY(peer_bio, nullptr, nullptr, nullptr);
+		// 4) Deserialize g**a
+		peer_key = deserialize_evp_pkey((char*)peer_key_buf, peer_key_len);
 		if (!peer_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "error pem read" << endl;
-			throw 5;
+			<< "error deserialize_evp_pkey" << endl;
+			throw 3;
 		}
-
 
 		// 5) Derive session key for messages between client
 		clients_session_key_len = EVP_CIPHER_key_length(get_authenticated_encryption_cipher());
@@ -822,89 +813,108 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		if (!clients_session_key) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "error derive session key" << endl;
-			throw 6;
+			throw 4;
 		}
 
 
-		// 4) Send serialized g**b||{<g**b,g**a>privb}session_c-to-c
 
+		// 6) Send M2 of STS protocol:
+		// 	len of g**b (uint32_t) || g**b || { <g**b, g**a>privb }session_c-to-c
 
-		// TODO invia anche lunghezza uint32_t della chiave
-
-
-
-
-		// 1c) Concat my_key and peer_key
+		// 6a) Concat my_key and peer_key
 		size_t concat_keys_len = my_dh_key_len + peer_key_len + 1;
 		unsigned char* concat_keys = (unsigned char*)malloc(concat_keys_len);
 		if (!concat_keys) {
-			cerr << "[Thread " << this_thread::get_id() << "] send_sig: "
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "malloc concat_keys failed" << endl;
-			throw 3;
+			throw 5;
 		}
 
 		memcpy(concat_keys, my_dh_key_buf, my_dh_key_len);
 		memcpy(concat_keys + my_dh_key_len, peer_key_buf, peer_key_len);
 		concat_keys[concat_keys_len - 1] = '\0';
-
 				
-		// 2) Sign concat keys and remove them
+		// 6b) Sign concat keys and remove them
 		signature = sign_message(concat_keys, concat_keys_len, signature_len);
 		secure_free(concat_keys, concat_keys_len);
-		
 
+		if (!signature) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "sign_message of concat_keys failed" << endl;
+			throw 5;
+		}
 
-
-
-
-
+		// 6c) Generate IV for encryption
 		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
 		if (!iv) {
-			throw 0;
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "generation iv failed" << endl;
+			throw 6;
 		}
 
-		// 3b) Encrypt message
+		// 6d) Encrypt message
 		ret = gcm_encrypt(signature, signature_len, iv, iv_len, clients_session_key, iv, iv_len, ciphertext_signed, ciphertext_signed_len, tag, tag_len);
 		if (ret < 0) {
-			throw 1;
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "gcm_encrypt failed" << endl;
+			throw 7;
 		}
 
-		// 4) Prepare complete packet for server
-		final_ciphertext_len = iv_len + ciphertext_signed_len + tag_len + my_dh_key_len;
+		// 6e) Prepare complete message for server
+		final_ciphertext_len = sizeof(uint32_t) + my_dh_key_len + iv_len + ciphertext_signed_len + tag_len;
 		final_ciphertext = (unsigned char*)malloc(final_ciphertext_len);
 		if (!final_ciphertext) {
-			throw 2;
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "malloc final_ciphertext failed" << endl;
+			throw 8;
 		}
 
-		// TODO aggiunge len dh key
-		memcpy(final_ciphertext, my_dh_key, my_dh_key_len);
-		memcpy(final_ciphertext + my_dh_key_len, iv, iv_len);
-		memcpy(final_ciphertext + iv_len + my_dh_key_len, ciphertext_signed, ciphertext_signed_len);
-		memcpy(final_ciphertext + iv_len + ciphertext_signed_len + my_dh_key_len, tag, tag_len);
+		uint32_t temp_my_dh_key_len = my_dh_key_len; // TODO overflow
+		temp_my_dh_key_len = htonl(temp_my_dh_key_len);
+		memcpy(final_ciphertext, &temp_my_dh_key_len, sizeof(temp_my_dh_key_len));
 
+		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len), my_dh_key, my_dh_key_len);
+		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len, iv, iv_len);
+		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len, ciphertext_signed, ciphertext_signed_len);
+		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len + ciphertext_signed_len, tag, tag_len);
 
-
+		// 6f) Send M2
 		ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "error sending pub key" << endl;
-			throw 6;
+			throw 9;
 		}
 
+		// 7) Send M3 STS protocol
 		// TODO ricevi e controlla firma dal client
+		// TODO crea funzione
 
 	} catch (int e) {
+		if (e >= 9) {
+			secure_free(final_ciphertext, final_ciphertext_len);
+		}
+		if (e >= 8) {
+			free(ciphertext_signed);
+			free(tag);
+		}
+		if (e >= 7) {
+			free(iv);
+		}
 		if (e >= 6) {
-			EVP_PKEY_free(peer_key);
+			secure_free(signature, signature_len);
 		}
 		if (e >= 5) {
-			BIO_free(peer_bio);
+			secure_free(clients_session_key, clients_session_key_len);
 		}
 		if (e >= 4) {
+			EVP_PKEY_free(peer_key);
+		}
+		if (e >= 3) {
 			secure_free(peer_key_buf, peer_key_len);
 		}
 		if (e >= 2) {
-			BIO_free(my_bio);
+			secure_free(my_dh_key_buf, my_dh_key_len);
 		}
 		if (e >= 1) {
 			EVP_PKEY_free(my_dh_key);
@@ -912,10 +922,15 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		return -1;
 	}
 
+	secure_free(final_ciphertext, final_ciphertext_len);
+	free(ciphertext_signed);
+	free(tag);
+	free(iv);
+	secure_free(signature, signature_len);
+	secure_free(clients_session_key, clients_session_key_len);
 	EVP_PKEY_free(peer_key);
-	BIO_free(peer_bio);
 	secure_free(peer_key_buf, peer_key_len);
-	BIO_free(my_bio);
+	secure_free(my_dh_key_buf, my_dh_key_len);
 	EVP_PKEY_free(my_dh_key);
 
 	return 1;
@@ -2508,7 +2523,52 @@ char* Client::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
 	return key_buf;
 }
 
+/**
+ * Deserialize a serialized EVP_PKEY structure
+ * 
+ * @param key_buf key to deserialize
+ * @param key_len length of serialized key
+ * 
+ * @return deserialized key on success, NULL on failure
+ */
+EVP_PKEY* deserialize_evp_pkey (const char* key_buf, const size_t key_len)
+{
+	int ret;
+	BIO* mbio;
+	EVP_PKEY* pkey;
 
+	try {
+		// Allocate bio
+		mbio = BIO_new(BIO_s_mem());
+		if (!mbio) {
+			throw 0;
+		}
+		
+		// Write serialized key in bio
+		ret = BIO_write(mbio, key_buf, key_len);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] deserialize_evp_pkey: "
+			<< "error bio_write" << endl;
+			throw 1;
+		}
+
+		// Deserialize key
+		pkey = PEM_read_bio_PUBKEY(mbio, nullptr, nullptr, nullptr);
+		if (!pkey) {
+			cerr << "[Thread " << this_thread::get_id() << "] deserialize_evp_pkey: "
+			<< "error pem read" << endl;
+			throw 1;
+		}
+		
+	} catch (int e) {
+		if (e >= 1) {
+			BIO_free(mbio);
+		}
+		return nullptr;
+	}
+
+	return pkey;
+}
 
 /**
  * Get Certificate Revocation List generated by the CA
