@@ -338,8 +338,6 @@ int Client::talk ()
 	string peer_username;
 	unsigned char* plaintext = nullptr;
 	size_t plaintext_len = 0;
-	unsigned char* plaintext_pubkey = nullptr;
-	size_t plaintext_pubkey_len = 0;
 	BIO* mem_bio = nullptr;
 	EVP_PKEY* peer_pubkey = nullptr;
 	
@@ -478,7 +476,6 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 	uint32_t peer_DH_key_len = 0;
 	EVP_PKEY* peer_DH_key = nullptr;
 	
-	unsigned char* ciphertext = nullptr;
 	size_t ciphertext_len = 0;
 
 	unsigned char* plaintext_from_server = nullptr;
@@ -762,7 +759,6 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	size_t ciphertext_signed_len = 0;
 	unsigned char* signature = nullptr;
 	unsigned int  signature_len = 0;
-	BIO* mbio = nullptr;
 	unsigned char* iv = nullptr;
 	size_t iv_len = 0;
 	unsigned char* tag = nullptr;
@@ -775,10 +771,6 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 
 	unsigned char* plaintext_from_server = nullptr;
 	size_t plaintext_from_server_len;
-	unsigned char* iv_received = nullptr;
-	size_t iv_received_len = 0;
-	unsigned char* tag_received = nullptr;
-	size_t tag_received_len = 0;
 
 	size_t  signature_received_crypt_len = 0;
 	unsigned char* signature_received = nullptr;
