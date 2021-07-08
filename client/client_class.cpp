@@ -380,7 +380,7 @@ int Client::talk ()
 	if (ret == 0) {
 		return 1;
 	}
-	else if(ret<0) {
+	else if (ret < 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] talk: "
 		<< "error receive message to server" << endl;
 		return -1;
@@ -506,7 +506,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 			throw 3;
 		}
 
-		memcpy(peer_DH_key_buf, plaintext_from_server, peer_DH_key_len);
+		memcpy(peer_DH_key_buf, plaintext_from_server + sizeof(peer_DH_key_len), peer_DH_key_len);
 
 		// 4c) Deserialize g^b
 		peer_DH_key = deserialize_evp_pkey((char*)peer_DH_key_buf, peer_DH_key_len);
@@ -3311,25 +3311,31 @@ int Client::receive_public_key_client_from_server(string peer_username, EVP_PKEY
 	}
 	// Extract message type
 	uint8_t message_type = get_message_type(plaintext);
-	free(plaintext);
 
 	if (message_type == SERVER_ERR) {
 		cout << "User " << peer_username << " has refused your request" << endl << endl;
+		free(plaintext);
 		return 0;
 	}
 	else if (message_type == SERVER_OK) {
 		if (plaintext_len < 2) {
+			free(plaintext);
 			return -1;
 		}
 
 		// Extract peer's public key (deserialize)
 		peer_pubkey = deserialize_evp_pkey((char*)plaintext + 1, plaintext_len - 1);
 		if (!peer_pubkey) {
+			free(plaintext);
 			cerr << "[Thread " << this_thread::get_id() << "] receive_public_key_client_from_server: "
 			<< "error deserialize_evp_pkey" << endl;
 			return -1;
 		}
+
+		free(plaintext);
 		return 1;
 	}
+
+	free(plaintext);
 	return -1;
 }

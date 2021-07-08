@@ -606,7 +606,7 @@ int Server::get_server_counter(const string& username, uint32_t& counter)
 	client_data->server_counter++;
 
 	// Check overflow of counter
-	if (client_data->client_counter == 0) {
+	if (client_data->server_counter == 0) {
 		return -1;
 	}
 

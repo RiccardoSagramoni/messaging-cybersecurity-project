@@ -1,0 +1,2 @@
+- [BUG] Alice invia talk a Bob PRIMA che Bob abbia inviato comandi a server.
+- [DEBUG] Ok fino a M2 (escluso)
