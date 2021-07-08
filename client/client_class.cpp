@@ -773,6 +773,19 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	size_t final_ciphertext_len = 0;
 
 
+	unsigned char* plaintext_from_server = nullptr;
+	size_t plaintext_from_server_len;
+	unsigned char* iv_received = nullptr;
+	size_t iv_received_len = 0;
+	unsigned char* tag_received = nullptr;
+	size_t tag_received_len = 0;
+
+	size_t  signature_received_crypt_len = 0;
+	unsigned char* signature_received = nullptr;
+	size_t  signature_received_len = 0;
+
+
+
 	try {
 		// EXECUTE STS PROTOCOL BETWEEN CLIENTS
 		// 1) Generate g**b
@@ -886,7 +899,39 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 			throw 9;
 		}
 
-		// 7) Send M3 STS protocol
+		// 7) Receive M3 STS protocol
+
+		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
+		iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
+		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE;
+
+		// Concat peer_key and my key
+		size_t concat_keys_to_ver_len = my_dh_key_len + peer_key_len + 1;
+		unsigned char* concat_keys_to_ver = (unsigned char*)malloc(concat_keys_to_ver_len);
+		if (!concat_keys) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "malloc concat_keys failed" << endl;
+			throw 9;
+		}
+
+		memcpy(concat_keys_to_ver, peer_key_buf, peer_key_len);
+		memcpy(concat_keys_to_ver + peer_key_len, my_dh_key_buf, my_dh_key_len);
+		concat_keys_to_ver[concat_keys_to_ver_len - 1] = '\0';
+
+		ret = gcm_decrypt(plaintext_from_server + iv_len, signature_received_crypt_len, plaintext_from_server, iv_len, plaintext_from_server + iv_len + signature_received_crypt_len, clients_session_key, plaintext_from_server, iv_len, signature_received, signature_received_len); // TODO ricontrolla offset
+		if (ret!=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "eroor decrypt received signed keys" << endl;
+			throw 9;
+		}
+
+		ret = verify_signature(signature_received, signature_received_len, concat_keys_to_ver, concat_keys_to_ver_len, peer_pukey);
+		ret = gcm_decrypt(plaintext_from_server + iv_len, signature_received_crypt_len, plaintext_from_server, iv_len, plaintext_from_server + iv_len + signature_received_crypt_len, clients_session_key, plaintext_from_server, iv_len, signature_received, signature_received_len); // TODO ricontrolla offset
+		if (ret!=1) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "error sign verify sign" << endl;
+		}
+		
 		// TODO ricevi e controlla firma dal client
 		// TODO crea funzione
 
