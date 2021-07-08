@@ -100,7 +100,7 @@ class Client {
 
 
 	// Fundamental methods for cryptography {
-	void secure_free (void* addr, size_t len);
+	static void secure_free (void* addr, size_t len);
 	
 	DH* get_dh2048();
 	EVP_PKEY* generate_key_dh();
@@ -108,10 +108,13 @@ class Client {
 	unsigned char* derive_session_key(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
 	
 	EVP_PKEY* get_client_private_key();
+	static char* serialize_evp_pkey (EVP_PKEY* key, size_t& key_len);
+	static EVP_PKEY* deserialize_evp_pkey (const char* key, const size_t key_len);
 	X509* get_CA_certificate();
 	X509_CRL* get_crl();
+
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
-	int verify_server_signature(unsigned char* signature, size_t signature_len, unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey);
+	int verify_signature(unsigned char* signature, size_t signature_len, unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey);
 
 	const EVP_CIPHER* get_authenticated_encryption_cipher();
 	int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,unsigned char* aad, int aad_len,unsigned char* tag,unsigned char* key,unsigned char* iv, int iv_len, unsigned char*& plaintext, size_t& plaintext_len);
@@ -151,8 +154,8 @@ class Client {
 	int send_message_to_client(unsigned char* clients_session_key);
 	int send_end_talking_message();
 	void receive_message_from_client(unsigned char* clients_session_key, int* return_value);
-	int negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len);
-	int negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len);
+	int negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len, EVP_PKEY* peer_pukey);
+	int negotiate_key_with_client_as_slave (unsigned char*& clients_session_key, size_t& clients_session_key_len, EVP_PKEY* peer_pukey);
 	int accept_request_to_talk(string peer_username);
 	int reject_request_to_talk(string peer_username);
 
