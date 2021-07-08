@@ -376,7 +376,7 @@ int Client::talk ()
 		<< "error send message to server" << endl;
 		return -1;
 	}
-	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
+	ret = receive_public_key_client_from_server(peer_username, peer_pubkey);
 	if (ret == 0) {
 		return 1;
 	}
@@ -987,7 +987,7 @@ int Client::accept_request_to_talk(string peer_username)
 		return -1;
 	}
 
-	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
+	ret = receive_public_key_client_from_server(peer_username, peer_pubkey);
 	if (ret == 0) {
 		return 1;
 	}
@@ -3290,18 +3290,22 @@ int Client::check_directory_traversal (const char* file_name) {
 
 
 
+// TODO commento
+/**
+ * 
+ * @param peer_username 
+ * @param peer_pubkey 
+ * @return 1 on success, 0 on recoverable error (do not terminate the program), -1 on failure 
+ */
+int Client::receive_public_key_client_from_server(string peer_username, EVP_PKEY*& peer_pubkey) {
 
-int Client::receive_publich_key_client_from_server(string peer_username, EVP_PKEY*& peer_pubkey) {
-
-	int ret = 0;
 	unsigned char* plaintext = nullptr;
 	size_t plaintext_len = 0;
-	BIO* mem_bio = nullptr;
 
 	// Receive public key from server
 	plaintext = bridge.wait_for_new_message(plaintext_len);
 	if (!plaintext) {
-		cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
+		cerr << "[Thread " << this_thread::get_id() << "] receive_public_key_client_from_server: "
 		<< "error receive plaintext" << endl;
 		return -1;
 	}
@@ -3318,25 +3322,11 @@ int Client::receive_publich_key_client_from_server(string peer_username, EVP_PKE
 			return -1;
 		}
 
-		// 1) Get peer public key (deserialize)
-		mem_bio = BIO_new(BIO_s_mem());
-		if (!mem_bio) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
-			<< "error bio_new" << endl;
-			return -1;
-		}
-		
-		ret = BIO_write(mem_bio, plaintext + 1, plaintext_len - 1);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
-			<< "error bio_write" << endl;
-			return -1;
-		}
-
-		peer_pubkey = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
+		// Extract peer's public key (deserialize)
+		peer_pubkey = deserialize_evp_pkey((char*)plaintext + 1, plaintext_len - 1);
 		if (!peer_pubkey) {
-			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
-			<< "error pem read" << endl;
+			cerr << "[Thread " << this_thread::get_id() << "] receive_public_key_client_from_server: "
+			<< "error deserialize_evp_pkey" << endl;
 			return -1;
 		}
 		return 1;
