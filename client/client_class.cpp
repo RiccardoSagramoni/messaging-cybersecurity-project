@@ -3290,7 +3290,7 @@ int Client::check_directory_traversal (const char* file_name) {
 
 
 
-// TODO commento
+// Before the negotiation between clients, is used to receive pubkey from server
 /**
  * 
  * @param peer_username 
