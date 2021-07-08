@@ -100,7 +100,7 @@ class Client {
 
 
 	// Fundamental methods for cryptography {
-	void secure_free (void* addr, size_t len);
+	static void secure_free (void* addr, size_t len);
 	
 	DH* get_dh2048();
 	EVP_PKEY* generate_key_dh();
@@ -108,10 +108,12 @@ class Client {
 	unsigned char* derive_session_key(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, size_t key_len);
 	
 	EVP_PKEY* get_client_private_key();
+	static char* serialize_evp_pkey (EVP_PKEY* key, size_t& key_len);
 	X509* get_CA_certificate();
 	X509_CRL* get_crl();
+
 	unsigned char* sign_message(unsigned char* msg, size_t msg_len, unsigned int& signature_len);
-	int verify_server_signature(unsigned char* signature, size_t signature_len, unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey);
+	int verify_signature(unsigned char* signature, size_t signature_len, unsigned char* cleartext, size_t cleartext_len, EVP_PKEY* client_pubkey);
 
 	const EVP_CIPHER* get_authenticated_encryption_cipher();
 	int gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,unsigned char* aad, int aad_len,unsigned char* tag,unsigned char* key,unsigned char* iv, int iv_len, unsigned char*& plaintext, size_t& plaintext_len);
