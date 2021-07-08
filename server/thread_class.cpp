@@ -2212,7 +2212,7 @@ int ServerThread::send_public_key_for_talk (const string& username, const int so
 		return -1;
 	}
 
-	ret = send_plaintext(socket, msg, 1, key, username);
+	ret = send_plaintext(socket, msg, msg_len, key, username);
 
 	free(msg);
 	free(ser_peer_pubkey);
