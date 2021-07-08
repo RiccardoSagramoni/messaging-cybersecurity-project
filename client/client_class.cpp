@@ -336,9 +336,6 @@ int Client::talk ()
 	char* message = nullptr;
 	size_t message_len = 1;
 	string peer_username;
-	unsigned char* plaintext = nullptr;
-	size_t plaintext_len = 0;
-	BIO* mem_bio = nullptr;
 	EVP_PKEY* peer_pubkey = nullptr;
 	
 	//get user to talk
@@ -379,73 +376,43 @@ int Client::talk ()
 		<< "error send message to server" << endl;
 		return -1;
 	}
-
-
-	plaintext = bridge.wait_for_new_message(plaintext_len);
-
-	// Extract message type
-	uint8_t message_type = get_message_type(plaintext);
-	free(plaintext);
-
-	if (message_type == SERVER_ERR) {
-		cout << "User " << peer_username << " has refused your request" << endl << endl;
+	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
+	if (ret == 0) {
 		return 1;
 	}
-	else if (message_type == SERVER_OK) {
-		if (plaintext_len < 2) {
-			return -1;
-		}
+	else if(ret<0) {
+		cerr << "[Thread " << this_thread::get_id() << "] talk: "
+		<< "error receive message to server" << endl;
+		return -1;
+	}
 
-		// 1) Get peer public key (deserialize)
-		mem_bio = BIO_new(BIO_s_mem());
-		if (!mem_bio) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error bio_new" << endl;
-			return -1;
-		}
-		
-		ret = BIO_write(mem_bio, plaintext + 1, plaintext_len - 1);
-		if (ret <= 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error bio_write" << endl;
-			return -1;
-		}
+	// 2) DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
+	unsigned char* clients_session_key = nullptr;
+	size_t clients_session_key_lenght = 0;
 
-		peer_pubkey = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
-		if (!peer_pubkey) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "error pem read" << endl;
-			return -1;;
-		}
+	ret = negotiate_key_with_client_as_master(clients_session_key, clients_session_key_lenght, peer_pubkey);
+	if (ret < 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] talk: "
+		<< "negotiation key failed" << endl;
+		return -1;
+	}
 
-		// 2) DIFFIE-HELLMAN PROTOCOL: exchange keys between clients
-		unsigned char* clients_session_key = nullptr;
-		size_t clients_session_key_lenght = 0;
+	// 3) Create new thread and start talking
+	int return_value;
+	bridge.set_talking_state(STATUS_TALKING_YES);
 
-		ret = negotiate_key_with_client_as_master(clients_session_key, clients_session_key_lenght, peer_pubkey);
-		if (ret < 0) {
-			cerr << "[Thread " << this_thread::get_id() << "] talk: "
-			<< "negotiation key failed" << endl;
-			return -1;
-		}
+	thread receive_thread(&Client::receive_message_from_client, this, clients_session_key, &return_value);
+	send_message_to_client(clients_session_key);
+	receive_thread.join();
 
-		// 3) Create new thread and start talking
-		int return_value;
-		bridge.set_talking_state(STATUS_TALKING_YES);
+	secure_free(clients_session_key, clients_session_key_lenght);
 
-		thread receive_thread(&Client::receive_message_from_client, this, clients_session_key, &return_value);
-		send_message_to_client(clients_session_key);
-		receive_thread.join();
+	// 4) Check exit status
+	int status = bridge.get_talking_state();
+	bridge.set_talking_state(STATUS_TALKING_NO);
 
-		secure_free(clients_session_key, clients_session_key_lenght);
-
-		// 4) Check exit status
-		int status = bridge.get_talking_state();
-		bridge.set_talking_state(STATUS_TALKING_NO);
-
-		if (return_value != 1 || status == STATUS_TALKING_ERR) {
-			return -1;
-		}
+	if (return_value != 1 || status == STATUS_TALKING_ERR) {
+		return -1;
 	}
 	else {
 		cerr << "Error talk(): "
@@ -525,6 +492,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 			<< "wait_for_new_message failed" << endl;
 			throw 2;
 		}
+
 		
 		// 4a) Extract length of g^b
 		memcpy(&peer_DH_key_len, plaintext_from_server, sizeof(peer_DH_key_len));
@@ -881,6 +849,11 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		// 7) Receive M3 STS protocol
 
 		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
+		if (!plaintext_from_server) {
+			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
+			<< "malloc concat_keys failed" << endl;
+			throw 10;
+		}
 		iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
 		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE; // TODO check overflow e underflow
 
@@ -1011,6 +984,16 @@ int Client::accept_request_to_talk(string peer_username)
 	if (ret <= 0) {
 		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 		<< "error send message to server for accept" << endl;
+		return -1;
+	}
+
+	ret = receive_publich_key_client_from_server(peer_username, peer_pubkey);
+	if (ret == 0) {
+		return 1;
+	}
+	if (ret < 0) {
+		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
+		<< "error receive message from server" << endl;
 		return -1;
 	}
 
@@ -1347,6 +1330,11 @@ int Client::show()
 	}
 
 	msg_received_view = bridge.wait_for_new_message(msg_received_view_len);
+	if (!msg_received_view) {
+		cerr << "[Thread " << this_thread::get_id() << "] show: "
+		<< "wrong received message" << endl;
+		return -1;
+	}
 	// Check if the header the the response is correct
 	uint8_t message_type = get_message_type(msg_received_view);
 	if (message_type != SERVER_OK) {
@@ -3297,4 +3285,61 @@ int Client::check_directory_traversal (const char* file_name) {
 	free(client_directory);
 
 	return ret ? 1 : 0;
+}
+
+
+
+
+
+int Client::receive_publich_key_client_from_server(string peer_username, EVP_PKEY*& peer_pubkey) {
+
+	int ret = 0;
+	unsigned char* plaintext = nullptr;
+	size_t plaintext_len = 0;
+	BIO* mem_bio = nullptr;
+
+	// Receive public key from server
+	plaintext = bridge.wait_for_new_message(plaintext_len);
+	if (!plaintext) {
+		cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
+		<< "error receive plaintext" << endl;
+		return -1;
+	}
+	// Extract message type
+	uint8_t message_type = get_message_type(plaintext);
+	free(plaintext);
+
+	if (message_type == SERVER_ERR) {
+		cout << "User " << peer_username << " has refused your request" << endl << endl;
+		return 0;
+	}
+	else if (message_type == SERVER_OK) {
+		if (plaintext_len < 2) {
+			return -1;
+		}
+
+		// 1) Get peer public key (deserialize)
+		mem_bio = BIO_new(BIO_s_mem());
+		if (!mem_bio) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
+			<< "error bio_new" << endl;
+			return -1;
+		}
+		
+		ret = BIO_write(mem_bio, plaintext + 1, plaintext_len - 1);
+		if (ret <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
+			<< "error bio_write" << endl;
+			return -1;
+		}
+
+		peer_pubkey = PEM_read_bio_PUBKEY(mem_bio, nullptr, nullptr, nullptr);
+		if (!peer_pubkey) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_publich_key_client_from_server: "
+			<< "error pem read" << endl;
+			return -1;
+		}
+		return 1;
+	}
+	return -1;
 }
