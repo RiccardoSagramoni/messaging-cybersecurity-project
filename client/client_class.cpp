@@ -267,13 +267,41 @@ void Client::execute_user_commands ()
 	string username_requesting_talk;
 	
 	while (true) {
-		print_command_options();
+		bool is_there_previous_request_talk = (bridge.check_request_talk(username_requesting_talk) == 1);
+
+		if (!is_there_previous_request_talk) {
+			print_command_options();
+			cout << "Insert command: ";
+		}
+		else {
+			cout << "(yes/no)? ";
+		}
 
 		// Take command from user
-		cout << "Insert command: ";
 		cin >> command;
 
-		if (command == "0") {
+		if (is_there_previous_request_talk || bridge.check_request_talk(username_requesting_talk) == 1) {
+			if (command == "yes") {
+				cout << "Request from " << username_requesting_talk << " accepted" << endl;
+
+				ret = accept_request_to_talk(username_requesting_talk);
+				if (ret != 1) {
+					cerr << "accept request error" << endl;
+					break;
+				}
+			}
+			else {
+				cout << "Request from " << username_requesting_talk << " refused" << endl;
+
+				ret = reject_request_to_talk(username_requesting_talk);
+				if (ret != 1) {
+					cerr << "reject request error" << endl;
+					break;
+				}
+				cout << endl;
+			}
+		}
+		else if (command == "0") {
 			ret = talk();
 			if (ret < 0) {
 				cerr << "Error: talk() failed" << endl;
@@ -295,27 +323,6 @@ void Client::execute_user_commands ()
 			}
 			cout << "Bye!!" << endl;
 			break;
-		}
-		else if (bridge.check_request_talk(username_requesting_talk) == 1) {
-			if (command == "yes") {
-				cout << "Request from " << username_requesting_talk << " accepted" << endl;
-
-				ret = accept_request_to_talk(username_requesting_talk);
-				if (ret != 1) {
-					cerr << "accept request error" << endl;
-					break;
-				}
-			}
-			else {
-				cout << "Request from " << username_requesting_talk << " refused" << endl;
-
-				ret = reject_request_to_talk(username_requesting_talk);
-				if (ret != 1) {
-					cerr << "reject request error" << endl;
-					break;
-				}
-				cout << endl;
-			}
 		}
 		else {
 			cout << "Error: wrong command" << endl << endl;
@@ -418,7 +425,7 @@ int Client::talk ()
 		return -1;
 	}
 
-	cout << endl;
+	cout << "END CHAT" << endl << endl;
 	
 	return 1;
 }
@@ -1032,7 +1039,7 @@ int Client::accept_request_to_talk(string peer_username)
 
 	receive_thread.join();
 
-	cout << "END CHAT" << endl;
+	cout << "END CHAT" << endl << endl;
 	secure_free(clients_session_key, clients_session_key_len);
 
 	// 7) Check if the talk failed
@@ -1079,7 +1086,6 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 	while (true) {
 		try {
 			// 1) GET MESSAGE FROM STANDARD INPUT
-			
 			getline(cin, message);
 			if (cin.rdstate() && !cin.good()) {
 				break;
@@ -3234,14 +3240,14 @@ void Client::input_slave_thread ()
 			string peer_username;
 			uint32_t peer_username_len = 0;
 
-			//check is msg is valid (is a null terminated string)
+			// Check is msg is valid (is a null terminated string)
 			if (msg[msg_len - 1] != '\0' || msg_len <= sizeof(uint32_t) + 1) {
 				free(msg);
 				shutdown(server_socket, SHUT_RDWR);
 				return;
 			}
 
-			//deserialize length of username
+			// Deserialize length of username
 			peer_username_len = ntohl(*(uint32_t*)(msg + 1));
 			if (msg_len != sizeof(uint32_t) + 1 + peer_username_len) {
 				free(msg);
@@ -3249,7 +3255,7 @@ void Client::input_slave_thread ()
 				return;
 			}
 
-			//extract peer's username and convert it to string
+			// Extract peer's username and convert it to string
 			char* peer_username_c = (char*)(msg + 1 + sizeof(uint32_t));
 			peer_username = peer_username_c;
 			bridge.add_request_talk(peer_username);
