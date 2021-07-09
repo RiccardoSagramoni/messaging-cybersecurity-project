@@ -537,7 +537,7 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 
 		// 3) Receive tag
 		ret_long = receive_message(socket, (void**)&tag);
-		if (ret_long <= 0) {
+		if (ret_long < TAG_SIZE) {
 			throw 2;
 		}
 
@@ -1452,7 +1452,7 @@ int ServerThread::gcm_encrypt (const unsigned char* plaintext, const int plainte
 		}
 
 		if (outlen < 0 || outlen > numeric_limits<size_t>::max() ||
-			ciphertext_len > numeric_limits<size_t>::max() - outlen) 
+			ciphertext_len > numeric_limits<size_t>::max() - (size_t)outlen) 
 		{
 			throw 4;
 		}
@@ -1577,7 +1577,7 @@ int ServerThread::gcm_decrypt (const unsigned char* ciphertext, const int cipher
 		}
 
 		if (outlen < 0 || outlen > numeric_limits<size_t>::max() ||
-			plaintext_len > numeric_limits<size_t>::max() - outlen) {
+			plaintext_len > numeric_limits<size_t>::max() - (size_t)outlen) {
 			throw 2;
 		}
 		plaintext_len += outlen;
@@ -2397,12 +2397,6 @@ void ServerThread::talk (const string& src_username, const int src_socket, const
 		}
 	}
 }
-/*
-A->S1 chiudi
-S1->B chiudi
-S1 set closing state
-B->S2 chiudi
-*/
 
 /**
  * Accept or refuse a request to talk
@@ -2418,16 +2412,18 @@ int ServerThread::execute_accept_talk (const unsigned char* msg, const size_t ms
 	string username = "";
 	
 	if (accept) {
+		// Check if message is valid
 		if (msg_len <= 1 + sizeof(uint32_t)) {
 			return -1;
 		}
 
+		// Extract length
 		uint32_t len;
 		memcpy(&len, msg + 1, sizeof(len));
 		len = ntohl(len);
 
-		if (len > numeric_limits<size_t>::max() ||
-			(size_t)len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) || 
+		// Check integer overflow
+		if (len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) || 
 			msg_len < 1 + sizeof(len) + (size_t)len) 
 		{
 			return -1;
