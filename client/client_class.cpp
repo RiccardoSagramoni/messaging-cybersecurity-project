@@ -267,7 +267,9 @@ void Client::execute_user_commands ()
 	string username_requesting_talk;
 	
 	while (true) {
-		bool is_there_previous_request_talk = (bridge.check_request_talk(username_requesting_talk) == 1);
+		// Check the client has received a request to talk while occupied
+		bool is_there_previous_request_talk = 
+			(bridge.check_request_talk(username_requesting_talk) == 1);
 
 		if (!is_there_previous_request_talk) {
 			print_command_options();
