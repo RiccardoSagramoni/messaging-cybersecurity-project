@@ -391,7 +391,8 @@ int Client::talk ()
 	size_t clients_session_key_lenght = 0;
 
 	ret = negotiate_key_with_client_as_master(clients_session_key, clients_session_key_lenght, peer_pubkey);
-	if (ret < 0) {
+	EVP_PKEY_free(peer_pubkey);
+	if (ret != 1) {
 		cerr << "[Thread " << this_thread::get_id() << "] talk: "
 		<< "negotiation key failed" << endl;
 		return -1;
@@ -429,7 +430,6 @@ int Client::talk ()
  * @param clients_session_key_len client session key lenght
  * @return 1 on success, -1 on failure
  */
-
 int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session_key, size_t& clients_session_key_len, EVP_PKEY* peer_pukey)
 {
 	int ret;
@@ -601,7 +601,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		// 	{ <g^a, g^b>privA }session_c2c
 		size_t M3_tag_len = 0;
 		size_t M3_iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
-		unsigned char* M3_iv = generate_iv(get_authenticated_encryption_cipher(), M3_iv_len);
+		M3_iv = generate_iv(get_authenticated_encryption_cipher(), M3_iv_len);
 		if (!M3_iv) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
 			<< "generate iv for M3 failed" << endl;
@@ -860,8 +860,8 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE; // TODO check overflow e underflow
 
 		// 7a) Concat peer_key and my key in order to verify signature
-		size_t concat_keys_to_ver_len = my_dh_key_len + peer_key_len + 1;
-		unsigned char* concat_keys_to_ver = (unsigned char*)malloc(concat_keys_to_ver_len);
+		concat_keys_to_ver_len = my_dh_key_len + peer_key_len + 1;
+		concat_keys_to_ver = (unsigned char*)malloc(concat_keys_to_ver_len);
 		if (!concat_keys) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "malloc concat_keys failed" << endl;
@@ -1008,7 +1008,8 @@ int Client::accept_request_to_talk(string peer_username)
 	unsigned char* clients_session_key = nullptr;
 	size_t clients_session_key_len = 0;
 	ret = negotiate_key_with_client_as_slave(clients_session_key, clients_session_key_len, peer_pubkey);
-	if (!ret) {
+	EVP_PKEY_free(peer_pubkey);
+	if (ret != 1) {
 		cerr << "[Thread " << this_thread::get_id() << "] accept_request_to_talk: "
 		<< "negotiate_key_with_client_as_slave failed" << endl;
 		return -1;
@@ -1591,14 +1592,14 @@ int Client::negotiate()
 			throw 13;
 		}
 		
-		//decrypt and verify server signature
+		// decrypt and verify server signature
 		ret = decrypt_and_verify_sign(ciphertext, ciphertext_len, my_dh_key, peer_key, session_key, session_key_len, iv, iv_len, tag, public_key_from_cert);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
 			<< "error verifying server sign" << endl;
 			throw 14;
 		}
-		//crypt sign and send it
+		// encrypt sign and send it
 		ret = send_sig(my_dh_key, peer_key, session_key, session_key_len);
 		if (ret <= 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate: "
@@ -2535,7 +2536,7 @@ char* Client::serialize_evp_pkey (EVP_PKEY* key, size_t& key_len)
 	
 	} catch (int e) {
 		if (e >= 2) {
-			secure_free(key_buf, key_len);
+			free(key_buf);
 		}
 		if (e >= 1) {
 			BIO_free(mbio);
@@ -2591,6 +2592,8 @@ EVP_PKEY* Client::deserialize_evp_pkey (const char* key_buf, const size_t key_le
 		}
 		return nullptr;
 	}
+
+	BIO_free(mbio);
 
 	return pkey;
 }
@@ -3328,14 +3331,13 @@ int Client::receive_public_key_client_from_server(string peer_username, EVP_PKEY
 
 		// Extract peer's public key (deserialize)
 		peer_pubkey = deserialize_evp_pkey((char*)plaintext + 1, plaintext_len - 1);
+		free(plaintext);
 		if (!peer_pubkey) {
-			free(plaintext);
 			cerr << "[Thread " << this_thread::get_id() << "] receive_public_key_client_from_server: "
 			<< "error deserialize_evp_pkey" << endl;
 			return -1;
 		}
 
-		free(plaintext);
 		return 1;
 	}
 
