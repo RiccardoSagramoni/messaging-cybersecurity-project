@@ -2302,9 +2302,6 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 				
 		// 2) Sign concat keys and remove them
 		signature = sign_message(concat_keys, concat_keys_len, signature_len);
-		if (signature_len < concat_keys_len) {
-			throw 3;
-		}
 		secure_free(concat_keys, concat_keys_len);
 
 		if (!signature) {
