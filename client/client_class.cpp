@@ -334,7 +334,6 @@ int Client::talk ()
 {
 	int ret = 0;
 	char* message = nullptr;
-	size_t message_len = 1;
 	string peer_username;
 	EVP_PKEY* peer_pubkey = nullptr;
 	
@@ -348,12 +347,12 @@ int Client::talk ()
 	cout << "Waiting " << peer_username << " answer..." << endl;
 
 	// Check integer overflow
-	if (peer_username.length() > numeric_limits<size_t>::max() || (size_t)peer_username.length() > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t)) 
+	if (peer_username.length() > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - 1) 
 	{
 		return -1;
 	}
 	//store username_lenght
-	message_len += sizeof(uint32_t) + peer_username.length() + 1;
+	size_t message_len = 1 + sizeof(uint32_t) + peer_username.length() + 1;
 	//allocate msg
 	message = (char*)malloc(message_len);
 	if (!message) {
@@ -366,7 +365,7 @@ int Client::talk ()
 
 	
 	// Check integer overflow
-	if (peer_username.length() > numeric_limits<size_t>::max() -1) {
+	if (peer_username.length() > numeric_limits<size_t>::max() - 1) {
 		return -1;
 	}
 	// insert username length
@@ -557,7 +556,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 		// 7) Generate <g**b, g**a> and verify it
 
-		if (peer_DH_key_len > numeric_limits<size_t>::max() -1 ||
+		if (peer_DH_key_len > numeric_limits<size_t>::max() - 1 ||
 			my_dh_key_len > numeric_limits<size_t>::max() - 1 - peer_DH_key_len)
 		{
 			throw 7;
@@ -587,7 +586,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 		// 8) Send to other client the signature of concat keys
 		// 	<g**a, g**b>
-		if (my_dh_key_len > numeric_limits<size_t>::max() -1 ||
+		if (my_dh_key_len > numeric_limits<size_t>::max() - 1 ||
 			peer_DH_key_len > numeric_limits<size_t>::max() - 1 - my_dh_key_len)
 		{
 			throw 7;
@@ -635,7 +634,8 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 			throw 10;
 		}
 
-		if (M3_iv_len > numeric_limits<size_t>::max() - M3_encrypted_sign_len - M3_tag_len)
+		if (M3_tag_len > numeric_limits<size_t>::max() - M3_encrypted_sign_len ||
+			M3_iv_len > numeric_limits<size_t>::max() - M3_encrypted_sign_len - M3_tag_len)
 		{
 			throw 11;
 		}
@@ -849,7 +849,9 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 			throw 7;
 		}
 
-		if ( sizeof(uint32_t) > numeric_limits<size_t>::max() -1 ||
+		if (iv_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) ||
+			ciphertext_signed_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - iv_len ||
+			tag_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - iv_len - ciphertext_signed_len ||
 			my_dh_key_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - iv_len - ciphertext_signed_len - tag_len)
 		{
 			throw 8;
@@ -996,8 +998,7 @@ int Client::accept_request_to_talk(string peer_username)
 	EVP_PKEY* peer_pubkey = nullptr;
 
 	// 1a) Generate length of the message
-	if (sizeof(uint32_t) > numeric_limits<size_t>::max() -1 ||
-		peer_username.length() > numeric_limits<size_t>::max() - 2 - sizeof(uint32_t))
+	if (peer_username.length() > numeric_limits<size_t>::max() - 2 - sizeof(uint32_t))
 	{
 		return -1;
 	}
@@ -1015,7 +1016,7 @@ int Client::accept_request_to_talk(string peer_username)
 	*type = ACCEPT_TALK;
 
 	// 2a) Insert username length
-	if (peer_username.length() > numeric_limits<size_t>::max() -1)
+	if (peer_username.length() > numeric_limits<uint32_t>::max() - 1)
 	{
 		return -1;
 	}
@@ -1147,7 +1148,7 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			}
 
 			// Add a counter to prevent replay attacks during the chat
-			if ( message.length() > numeric_limits<size_t>::max() - 1 - sizeof(counter))
+			if (message.length() > numeric_limits<size_t>::max() - 1 - sizeof(counter))
 			{
 				return -1;
 			}
@@ -1175,7 +1176,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			}
 
 			// 4) Prepare complete packet for server
-			if (iv_len > numeric_limits<size_t>::max() - ciphertext_len - tag_len)
+			if (ciphertext_len > numeric_limits<size_t>::max() - 1 ||
+				tag_len > numeric_limits<size_t>::max() - 1 - ciphertext_len ||
+				iv_len > numeric_limits<size_t>::max() - 1 - ciphertext_len - tag_len)
 			{
 				throw 2;
 			}
@@ -1419,15 +1422,15 @@ int Client::show()
 		username_len = ntohl(username_len);
 
 
-		if (i == numeric_limits<size_t>::max() || username_len > numeric_limits<size_t>::max())
-		{
+		if (i > numeric_limits<size_t>::max() - sizeof(username_len)) {
 			return -1;
 		}
 		i += sizeof(username_len);
 
 		cout << (char*)(msg_received_view + i) << endl;
 
-		if (i == numeric_limits<size_t>::max() || username_len > numeric_limits<size_t>::max())
+		if (username_len > numeric_limits<size_t>::max() ||
+			i > numeric_limits<size_t>::max() - (size_t)username_len)
 		{
 			return -1;
 		}
@@ -2314,7 +2317,7 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 		}
 
 		// 1c) Concat my_key and peer_key
-		if (peer_key_len > numeric_limits<size_t>::max() -1 ||
+		if (peer_key_len > numeric_limits<size_t>::max() - 1 ||
 			my_key_len > numeric_limits<size_t>::max() - 1 - peer_key_len)
 		{
 			throw 3;
@@ -2871,6 +2874,10 @@ int Client::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 			<< "EVP_DecryptUpdate plaintext failed" << endl;
 			throw 2;
 		}
+
+		if (outlen < 0 || outlen > numeric_limits<size_t>::max()) {
+			throw 2;
+		}
 		plaintext_len = outlen;
 
 		// Set expected tag value
@@ -2889,7 +2896,7 @@ int Client::gcm_decrypt (unsigned char* ciphertext, int ciphertext_len,
 			<< "EVP_DecryptFinal returned " << ret << endl;
 			throw 2;
 		}
-		if (plaintext_len == numeric_limits<size_t>::max()) {
+		if (outlen < 0 || plaintext_len > numeric_limits<size_t>::max() - outlen) {
 			throw 2;
 		}
 		plaintext_len += outlen;
@@ -2990,6 +2997,9 @@ int Client::gcm_encrypt (unsigned char* plaintext, int plaintext_len,
 			ERR_print_errors_fp(stderr);
 			throw 4;
 		}
+		if (outlen < 0 || outlen > numeric_limits<size_t>::max()) {
+			throw 4;
+		}
 		ciphertext_len = outlen;
 
 		// Finalize Encryption
@@ -3000,7 +3010,7 @@ int Client::gcm_encrypt (unsigned char* plaintext, int plaintext_len,
 			ERR_print_errors_fp(stderr);
 			throw 4;
 		}
-		if (ciphertext_len == numeric_limits<size_t>::max()) {
+		if (outlen < 0 || ciphertext_len > numeric_limits<size_t>::max() - outlen) {
 			throw 4;
 		}
 		ciphertext_len += outlen;
