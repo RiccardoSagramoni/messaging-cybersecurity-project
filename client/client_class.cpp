@@ -401,6 +401,8 @@ int Client::talk ()
 	int return_value;
 	bridge.set_talking_state(STATUS_TALKING_YES);
 
+	cout << endl << "START CHAT" << endl;
+
 	thread receive_thread(&Client::receive_message_from_client, this, clients_session_key, &return_value);
 	send_message_to_client(clients_session_key);
 	receive_thread.join();
@@ -414,11 +416,9 @@ int Client::talk ()
 	if (return_value != 1 || status == STATUS_TALKING_ERR) {
 		return -1;
 	}
-	else {
-		cerr << "Error talk(): "
-		<< "request to talk failed" << endl;
-		return -1;
-	}
+
+	cout << endl;
+	
 	return 1;
 }
 
@@ -492,6 +492,8 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 			<< "wait_for_new_message failed" << endl;
 			throw 2;
 		}
+
+		// TODO check size plaintext
 
 		
 		// 4a) Extract length of g^b
@@ -680,7 +682,6 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 	free(M3_iv);
 	secure_free(M3_signature, M3_signature_len);
 	secure_free(M2_plaintext, M2_plaintext_len);
-	secure_free(clients_session_key, clients_session_key_len);
 	EVP_PKEY_free(peer_DH_key);
 	secure_free(peer_DH_key_buf, peer_DH_key_len);
 	secure_free(plaintext_from_server, plaintext_from_server_len);
@@ -719,6 +720,8 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	unsigned char* tag = nullptr;
 	size_t tag_len = 0;
 
+	unsigned char* concat_keys_to_ver = nullptr;
+	size_t concat_keys_to_ver_len = 0;
 
 	unsigned char* final_ciphertext = nullptr;
 	size_t final_ciphertext_len = 0;
@@ -730,7 +733,6 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	size_t  signature_received_crypt_len = 0;
 	unsigned char* signature_received = nullptr;
 	size_t  signature_received_len = 0;
-
 
 
 	try {
@@ -833,7 +835,7 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		temp_my_dh_key_len = htonl(temp_my_dh_key_len);
 		memcpy(final_ciphertext, &temp_my_dh_key_len, sizeof(temp_my_dh_key_len));
 
-		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len), my_dh_key, my_dh_key_len);
+		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len), my_dh_key_buf, my_dh_key_len);
 		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len, iv, iv_len);
 		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len, ciphertext_signed, ciphertext_signed_len);
 		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len + ciphertext_signed_len, tag, tag_len);
@@ -873,12 +875,10 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		// 7b) Decrypt signature
 		ret = gcm_decrypt(plaintext_from_server + iv_len, signature_received_crypt_len, plaintext_from_server, iv_len, plaintext_from_server + iv_len + signature_received_crypt_len, clients_session_key, plaintext_from_server, iv_len, signature_received, signature_received_len);
 
-		secure_free(concat_keys_to_ver, concat_keys_to_ver_len);
-
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "error decrypt received signed keys" << endl;
-			throw 10;
+			throw 11;
 		}
 
 		// 7c) Verify signature
@@ -886,12 +886,15 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "error sign verify sign" << endl;
-			throw 11;
+			throw 12;
 		}
 		
 	} catch (int e) {
-		if (e >= 11) {
+		if (e >= 12) {
 			secure_free(signature_received, signature_received_len);
+		}
+		if (e >= 11) {
+			secure_free(concat_keys_to_ver, concat_keys_to_ver_len);
 		}
 		if (e >= 10) {
 			secure_free(plaintext_from_server, plaintext_from_server_len);
@@ -928,13 +931,13 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	}
 
 	secure_free(signature_received, signature_received_len);
+	secure_free(concat_keys_to_ver, concat_keys_to_ver_len);
 	secure_free(plaintext_from_server, plaintext_from_server_len);
 	secure_free(final_ciphertext, final_ciphertext_len);
 	free(ciphertext_signed);
 	free(tag);
 	free(iv);
 	secure_free(signature, signature_len);
-	secure_free(clients_session_key, clients_session_key_len);
 	EVP_PKEY_free(peer_key);
 	secure_free(peer_key_buf, peer_key_len);
 	secure_free(my_dh_key_buf, my_dh_key_len);
