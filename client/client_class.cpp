@@ -349,6 +349,9 @@ int Client::talk ()
 
 	//store username_lenght
 	message_len += sizeof(uint32_t) + peer_username.length() + 1;
+	if (message_len < sizeof(uint32_t) + peer_username.length() + 1) {
+		return -1;
+	}
 	//allocate msg
 	message = (char*)malloc(message_len);
 	if (!message) {
@@ -368,6 +371,9 @@ int Client::talk ()
 	memcpy(message + 1 + sizeof(string_size), peer_username.c_str(), peer_username.length() + 1);
 
 	// Send message to server
+	if (message_len<=1) {
+		return -1;
+	}
 	ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 	free(message);
 
@@ -476,6 +482,9 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		}
 
 		// 3) Send g^a to the other client
+		if (my_dh_key_len <= 0) {
+			throw 2;
+		}
 		ret = send_plaintext(server_socket, (unsigned char*)my_dh_key_buf, my_dh_key_len, session_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
@@ -495,7 +504,10 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 		// TODO check size plaintext
 
-		
+		if (plaintext_from_server_len < peer_DH_key_len + sizeof(peer_DH_key_len) + TAG_SIZE + sizeof(size_t) + sizeof(size_t)) {
+			throw 2;
+		}
+
 		// 4a) Extract length of g^b
 		memcpy(&peer_DH_key_len, plaintext_from_server, sizeof(peer_DH_key_len));
 		peer_DH_key_len = ntohl(peer_DH_key_len);
@@ -533,6 +545,11 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		size_t M2_iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
 		size_t M2_ciphertext_len = plaintext_from_server_len - sizeof(peer_DH_key_len) - 
 							peer_DH_key_len - M2_iv_len - TAG_SIZE; // TODO CHECK UNDERFLOW
+
+		if (plaintext_from_server_len < M2_ciphertext_len + sizeof(peer_DH_key_len) + 
+							peer_DH_key_len + M2_iv_len + TAG_SIZE) {
+								throw 6;
+							}
 
 		unsigned char* M2_iv = plaintext_from_server + sizeof(peer_DH_key_len) + peer_DH_key_len;
 		unsigned char* M2_ciphertext = M2_iv + M2_iv_len;
@@ -631,6 +648,9 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		memcpy(M3_final_ciphertext + M3_iv_len + M3_encrypted_sign_len, M3_tag, M3_tag_len);
 
 		// 9c) Send M3
+		if (M3_final_ciphertext_len < M3_iv_len + M3_encrypted_sign_len + M3_tag_len) {
+			throw 12;
+		}
 		ret = send_plaintext(server_socket, M3_final_ciphertext, M3_final_ciphertext_len, session_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
@@ -841,6 +861,9 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len + ciphertext_signed_len, tag, tag_len);
 
 		// 6f) Send M2
+		if (final_ciphertext_len < sizeof(uint32_t) + my_dh_key_len + iv_len + ciphertext_signed_len + tag_len) {
+			throw 9;
+		}
 		ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
@@ -858,7 +881,9 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		}
 		iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
 		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE; // TODO check overflow e underflow
-
+		if (plaintext_from_server_len < signature_received_crypt_len + iv_len + TAG_SIZE) {
+			throw 10;
+		}
 		// 7a) Concat peer_key and my key in order to verify signature
 		concat_keys_to_ver_len = my_dh_key_len + peer_key_len + 1;
 		concat_keys_to_ver = (unsigned char*)malloc(concat_keys_to_ver_len);
@@ -963,6 +988,9 @@ int Client::accept_request_to_talk(string peer_username)
 	size_t message_len = 1 + sizeof(uint32_t) + peer_username.length() + 1;
 	
 	// 1b) Allocate message to send
+	if (message_len <  1 + sizeof(uint32_t) + peer_username.length() + 1) {
+		return -1;
+	}
 	char* message = (char*)malloc(message_len);
 	if (!message) {
 		return -1;
@@ -982,6 +1010,9 @@ int Client::accept_request_to_talk(string peer_username)
 	memcpy(message + 1 + sizeof(username_len), peer_username.c_str(), peer_username.length() + 1);
 	
 	// 3) Send message to server for notify accepting the request
+	if (message_len<peer_username.length()) {
+		return -1;
+	}
 	ret = send_plaintext(server_socket, (unsigned char*)message, message_len, session_key);
 	free(message);
 	if (ret <= 0) {
@@ -1119,7 +1150,9 @@ int Client::send_message_to_client(unsigned char* clients_session_key)
 			if (!iv) {
 				throw 0;
 			}
-
+			if (actual_message_len < sizeof(uint32_t) + 1) {
+				throw 1;
+			}
 			// 3b) Encrypt message
 			ret = gcm_encrypt(actual_message, actual_message_len, iv, iv_len, clients_session_key, iv, iv_len, ciphertext, ciphertext_len, tag, tag_len);
 			if (ret < 0) {
@@ -1240,7 +1273,9 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			size_t ciphertext_len = plaintext_from_server_len - 1 - iv_len - TAG_SIZE;
 			
 			ret = gcm_decrypt(plaintext_from_server + 1 + iv_len, ciphertext_len, plaintext_from_server + 1, iv_len, plaintext_from_server + 1 + iv_len + ciphertext_len, clients_session_key, plaintext_from_server + 1, iv_len, message, message_len);
-
+			if (message_len < 1 + sizeof(uint32_t)) {
+				return;
+			}
 			if (ret < 0) {
 				cerr << "Error: failed decryption peer client's message" << endl;
 				*return_value = 0;
@@ -1337,6 +1372,9 @@ int Client::show()
 	if (!msg_received_view) {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "wrong received message" << endl;
+		return -1;
+	}
+	if (msg_received_view_len < 2) {
 		return -1;
 	}
 	// Check if the header the the response is correct
@@ -1488,7 +1526,9 @@ int Client::negotiate()
 			throw 3;
 		}
 		uint32_t pubkey_size = (uint32_t)ret_long;
-		
+		if (pubkey_size < sizeof(uint32_t)) {
+			throw 3;
+		}
 		// 4) Send g**a
 		ret = send_message(server_socket, (void*)pubkey_buf, pubkey_size);
 		if (ret < 1) {
@@ -2262,6 +2302,9 @@ int Client::send_sig(EVP_PKEY* my_dh_key, EVP_PKEY* peer_key, unsigned char* sha
 				
 		// 2) Sign concat keys and remove them
 		signature = sign_message(concat_keys, concat_keys_len, signature_len);
+		if (signature_len < concat_keys_len) {
+			throw 3;
+		}
 		secure_free(concat_keys, concat_keys_len);
 
 		if (!signature) {
