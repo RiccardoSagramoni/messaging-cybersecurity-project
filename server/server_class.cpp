@@ -126,6 +126,16 @@ bool Server::handle_socket_lock (const string& username, const bool to_lock, con
 		return false;
 	}
 
+	// Switch to client_data mutex, so that other threads can edit the shared map
+	// even if this thread blocks
+	shared_lock<shared_timed_mutex> lock_struct(client_data->mutex_global, std::defer_lock);
+
+	if (!lock_struct.try_lock()) { // If mutex fails, client_data is going to be destroyed soon
+		return -1;
+	}
+
+	mutex_unordered_map.unlock();
+
 	// Lock the correct stream of the socket
 	if (stream == 0) {
 		if (to_lock) client_data->mutex_socket_in.lock();
@@ -382,9 +392,11 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 		return -1;
 	}
 
+	// Switch to client_data mutex, so that other threads can edit the shared map
+	// even if this thread blocks
 	shared_lock<shared_timed_mutex> lock_struct(client_data->mutex_global, std::defer_lock);
 
-	if (!lock_struct.try_lock()) {
+	if (!lock_struct.try_lock()) { // If mutex fails, client_data is going to be destroyed soon
 		return -1;
 	}
 
@@ -433,6 +445,16 @@ int Server::wait_end_talk (const string& user)
 		<< "username " << user << " is not logged" << endl;
 		return -1;
 	}
+
+	// Switch to client_data mutex, so that other threads can edit the shared map
+	// even if this thread blocks
+	shared_lock<shared_timed_mutex> lock_struct(client_data->mutex_global, std::defer_lock);
+
+	if (!lock_struct.try_lock()) { // If mutex fails, client_data is going to be destroyed soon
+		return -1;
+	}
+
+	mutex_unordered_map.unlock();
 
 	// Wait until the talk is finished
 	unique_lock<mutex> end_talk_lock(client_data->end_talk_mutex);
