@@ -25,6 +25,8 @@
 using namespace std;
 
 struct connection_data {
+	shared_timed_mutex mutex_global;
+	
 	// Socket
 	const int socket;
 	mutex mutex_socket_out;
