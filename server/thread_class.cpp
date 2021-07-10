@@ -2367,7 +2367,7 @@ void ServerThread::talk (const string& src_username, const int src_socket, const
 			if (*type_ptr == END_TALK) {
 				return_value->store(1);
 				cerr << "[Thread " << this_thread::get_id() << "] talk: "
-				<< "closing talk (1)" << endl;
+				<< "closing talk" << endl;
 			}
 			else {
 				return_value->store(-1);
