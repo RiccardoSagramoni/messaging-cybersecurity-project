@@ -1759,6 +1759,7 @@ int Client::negotiate()
 		}
 		if (e >= 6) {
 			secure_free(session_key, session_key_len);
+			session_key = nullptr;
 		}
 		if (e >= 5) {
 			EVP_PKEY_free(peer_key);

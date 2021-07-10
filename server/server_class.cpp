@@ -218,7 +218,7 @@ int Server::set_available_status (const string& username, const bool status)
  * @param username identifier of the client
  * @return 1 on success, -1 on failure (client is not logged online)
  */
-int Server::remove_client (const string& username) // rick
+int Server::remove_client (const string& username)
 {
 	// Acquire exclusive lock for writing on the client data's container
 	unique_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
@@ -369,7 +369,7 @@ int Server::prepare_for_talking (const string& username, unsigned char*& key, si
  * 
  * @return 1 on success, -1 on failure 
  */
-int Server::wait_start_talk (const string& wanted_user, const string& asking_user) // rick
+int Server::wait_start_talk (const string& wanted_user, const string& asking_user)
 {
 	// Acquire lock for reading the client data's container
 	shared_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
