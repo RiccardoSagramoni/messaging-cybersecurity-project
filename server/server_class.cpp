@@ -30,10 +30,6 @@ bool Server::configure_listener_socket ()
 	if (listener_socket == -1) {
 		return false;
 	}
-	int e = 1;
-	if (setsockopt(listener_socket, SOL_SOCKET, SO_REUSEADDR, &e, sizeof(int)) < 0) { // TODO remove
-    	cerr << "setsockopt(SO_REUSEADDR) failed\n";
-	}
 
 	cout << "Listener socket created\n";
 
