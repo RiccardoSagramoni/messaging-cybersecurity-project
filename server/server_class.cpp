@@ -80,7 +80,7 @@ bool Server::add_new_client (string username, const int socket,
 {
 	// Acquire lock for connected_client data structure
 	// (automatically unlock at the end of its scope)
-	lock_guard<shared_timed_mutex> lock(connected_client_mutex);
+	unique_lock<shared_timed_mutex> lock(connected_client_mutex);
 
 	unsigned char* key_copy = (unsigned char*)malloc(key_len);
 	if (!key_copy) {
@@ -217,7 +217,7 @@ int Server::set_available_status (const string& username, const bool status)
 int Server::remove_client (const string& username)
 {
 	// Acquire exclusive lock for writing on the client data's container
-	lock_guard<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
+	unique_lock<shared_timed_mutex> mutex_unordered_map(connected_client_mutex);
 	
 	// Get client data associated with given username.
 	// Fails if there is no associated data.
@@ -227,6 +227,18 @@ int Server::remove_client (const string& username)
 	}
 	connection_data* client_data = it->second;
 	
+	unique_lock<shared_timed_mutex> lock_struct(client_data->mutex_global, std::defer_lock);
+
+	if (!lock_struct.try_lock()) {
+		// A thread is waiting for a talk
+		unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
+		client_data->has_chosen_interlocutor = true;
+		client_data->interlocutor_user = "";
+		client_data->ready_to_talk_cv.notify_all();
+		talk_lock.unlock();
+		lock_struct.lock();
+	}
+
 	// Bruteforce close the socket
 	if (shutdown(client_data->socket, SHUT_RDWR) >= 0) {
 		close(client_data->socket);
@@ -239,6 +251,7 @@ int Server::remove_client (const string& username)
 	free((void*) client_data->key);
 	
 	// Remove client data
+	lock_struct.unlock();
 	delete client_data;
 	connected_client.erase(it);
 	
@@ -369,6 +382,13 @@ int Server::wait_start_talk (const string& wanted_user, const string& asking_use
 		return -1;
 	}
 
+	shared_lock<shared_timed_mutex> lock_struct(client_data->mutex_global, std::defer_lock);
+
+	if (!lock_struct.try_lock()) {
+		return -1;
+	}
+
+	mutex_unordered_map.unlock();
 
 	// Wait until the "wanted" client have chosen an interlocutor
 	unique_lock<mutex> talk_lock(client_data->ready_to_talk_mutex);
