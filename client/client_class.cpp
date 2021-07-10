@@ -758,20 +758,20 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 	size_t ciphertext_signed_len = 0;
 	unsigned char* signature = nullptr;
 	unsigned int  signature_len = 0;
-	unsigned char* iv = nullptr;
-	size_t iv_len = 0;
-	unsigned char* tag = nullptr;
-	size_t tag_len = 0;
+	unsigned char* M2_iv = nullptr;
+	size_t M2_iv_len = 0;
+	unsigned char* M2_tag = nullptr;
+	size_t M2_tag_len = 0;
 
 	unsigned char* concat_keys_to_ver = nullptr;
 	size_t concat_keys_to_ver_len = 0;
 
-	unsigned char* final_ciphertext = nullptr;
-	size_t final_ciphertext_len = 0;
+	unsigned char* M2_final_ciphertext = nullptr;
+	size_t M2_final_ciphertext_len = 0;
 
 
-	unsigned char* plaintext_from_server = nullptr;
-	size_t plaintext_from_server_len;
+	unsigned char* M3_plaintext = nullptr;
+	size_t M3_plaintext_len = 0;
 
 	size_t  signature_received_crypt_len = 0;
 	unsigned char* signature_received = nullptr;
@@ -855,32 +855,32 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		}
 
 		// 6c) Generate IV for encryption
-		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
-		if (!iv) {
+		M2_iv = generate_iv(get_authenticated_encryption_cipher(), M2_iv_len);
+		if (!M2_iv) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "generation iv failed" << endl;
 			throw 6;
 		}
 
 		// 6d) Encrypt message
-		ret = gcm_encrypt(signature, signature_len, iv, iv_len, clients_session_key, iv, iv_len, ciphertext_signed, ciphertext_signed_len, tag, tag_len);
+		ret = gcm_encrypt(signature, signature_len, M2_iv, M2_iv_len, clients_session_key, M2_iv, M2_iv_len, ciphertext_signed, ciphertext_signed_len, M2_tag, M2_tag_len);
 		if (ret < 0) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "gcm_encrypt failed" << endl;
 			throw 7;
 		}
 
-		if (iv_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) ||
-			ciphertext_signed_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - iv_len ||
-			tag_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - iv_len - ciphertext_signed_len ||
-			my_dh_key_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - iv_len - ciphertext_signed_len - tag_len)
+		if (M2_iv_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) ||
+			ciphertext_signed_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - M2_iv_len ||
+			M2_tag_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - M2_iv_len - ciphertext_signed_len ||
+			my_dh_key_len > numeric_limits<size_t>::max() - 1 - sizeof(uint32_t) - M2_iv_len - ciphertext_signed_len - M2_tag_len)
 		{
 			throw 8;
 		}
 		// 6e) Prepare complete message for server
-		final_ciphertext_len = sizeof(uint32_t) + my_dh_key_len + iv_len + ciphertext_signed_len + tag_len;
-		final_ciphertext = (unsigned char*)malloc(final_ciphertext_len);
-		if (!final_ciphertext) {
+		M2_final_ciphertext_len = sizeof(uint32_t) + my_dh_key_len + M2_iv_len + ciphertext_signed_len + M2_tag_len;
+		M2_final_ciphertext = (unsigned char*)malloc(M2_final_ciphertext_len);
+		if (!M2_final_ciphertext) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "malloc final_ciphertext failed" << endl;
 			throw 8;
@@ -891,15 +891,15 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		}
 		uint32_t temp_my_dh_key_len = my_dh_key_len;
 		temp_my_dh_key_len = htonl(temp_my_dh_key_len);
-		memcpy(final_ciphertext, &temp_my_dh_key_len, sizeof(temp_my_dh_key_len));
+		memcpy(M2_final_ciphertext, &temp_my_dh_key_len, sizeof(temp_my_dh_key_len));
 
-		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len), my_dh_key_buf, my_dh_key_len);
-		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len, iv, iv_len);
-		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len, ciphertext_signed, ciphertext_signed_len);
-		memcpy(final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + iv_len + ciphertext_signed_len, tag, tag_len);
+		memcpy(M2_final_ciphertext + sizeof(temp_my_dh_key_len), my_dh_key_buf, my_dh_key_len);
+		memcpy(M2_final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len, M2_iv, M2_iv_len);
+		memcpy(M2_final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + M2_iv_len, ciphertext_signed, ciphertext_signed_len);
+		memcpy(M2_final_ciphertext + sizeof(temp_my_dh_key_len) + my_dh_key_len + M2_iv_len + ciphertext_signed_len, M2_tag, M2_tag_len);
 
 		// 6f) Send M2
-		ret = send_plaintext(server_socket, (unsigned char*)final_ciphertext, final_ciphertext_len, session_key);
+		ret = send_plaintext(server_socket, (unsigned char*)M2_final_ciphertext, M2_final_ciphertext_len, session_key);
 		if (ret < 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "error sending pub key" << endl;
@@ -907,18 +907,18 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		}
 
 		// 7) Receive M3 STS protocol
-
-		plaintext_from_server = bridge.wait_for_new_message(plaintext_from_server_len);
-		if (!plaintext_from_server) {
+		// { <g**a, g**b>_k-privA }_k-c2c
+		M3_plaintext = bridge.wait_for_new_message(M3_plaintext_len);
+		if (!M3_plaintext) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
-			<< "malloc concat_keys failed" << endl;
+			<< "received M3 failed" << endl;
 			throw 10;
 		}
-		iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
-		if (plaintext_from_server_len < iv_len + 1 + TAG_SIZE) {
+		size_t M3_iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
+		if (M3_plaintext_len < M3_iv_len + 1 + TAG_SIZE) {
 			throw 10;
 		}
-		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE;
+		signature_received_crypt_len = M3_plaintext_len - M3_iv_len - TAG_SIZE;
 		
 		// 7a) Concat peer_key and my key in order to verify signature
 		if (my_dh_key_len > numeric_limits<size_t>::max() -1 ||
@@ -941,7 +941,7 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		concat_keys_to_ver[concat_keys_to_ver_len - 1] = '\0';
 
 		// 7b) Decrypt signature
-		ret = gcm_decrypt(plaintext_from_server + iv_len, signature_received_crypt_len, plaintext_from_server, iv_len, plaintext_from_server + iv_len + signature_received_crypt_len, clients_session_key, plaintext_from_server, iv_len, signature_received, signature_received_len);
+		ret = gcm_decrypt(M3_plaintext + M3_iv_len, signature_received_crypt_len, M3_plaintext, M3_iv_len, M3_plaintext + M3_iv_len + signature_received_crypt_len, clients_session_key, M3_plaintext, M3_iv_len, signature_received, signature_received_len);
 
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
@@ -965,17 +965,17 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 			secure_free(concat_keys_to_ver, concat_keys_to_ver_len);
 		}
 		if (e >= 10) {
-			secure_free(plaintext_from_server, plaintext_from_server_len);
+			secure_free(M3_plaintext, M3_plaintext_len);
 		}
 		if (e >= 9) {
-			secure_free(final_ciphertext, final_ciphertext_len);
+			secure_free(M2_final_ciphertext, M2_final_ciphertext_len);
 		}
 		if (e >= 8) {
 			free(ciphertext_signed);
-			free(tag);
+			free(M2_tag);
 		}
 		if (e >= 7) {
-			free(iv);
+			free(M2_iv);
 		}
 		if (e >= 6) {
 			secure_free(signature, signature_len);
@@ -1000,11 +1000,11 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 
 	secure_free(signature_received, signature_received_len);
 	secure_free(concat_keys_to_ver, concat_keys_to_ver_len);
-	secure_free(plaintext_from_server, plaintext_from_server_len);
-	secure_free(final_ciphertext, final_ciphertext_len);
+	secure_free(M3_plaintext, M3_plaintext_len);
+	secure_free(M2_final_ciphertext, M2_final_ciphertext_len);
 	free(ciphertext_signed);
-	free(tag);
-	free(iv);
+	free(M2_tag);
+	free(M2_iv);
 	secure_free(signature, signature_len);
 	EVP_PKEY_free(peer_key);
 	secure_free(peer_key_buf, peer_key_len);
@@ -1320,10 +1320,23 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			break;
 		}
 		else if (message_type == SERVER_OK) {
-			// Decrypt message received
+			// Check received message
 			size_t iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
+			if (plaintext_from_server_len < 1 + iv_len + TAG_SIZE) {
+				cerr << "Error: wrong format message" << endl;
+				*return_value = 0;
+				free(plaintext_from_server);
+
+				// Notify hard failure to the sending thread
+				shutdown(server_socket, SHUT_RDWR);
+				bridge.set_talking_state(STATUS_TALKING_ERR);
+
+				return; 
+			}
+			
 			size_t ciphertext_len = plaintext_from_server_len - 1 - iv_len - TAG_SIZE;
 			
+			// Decrypt received message
 			ret = gcm_decrypt(plaintext_from_server + 1 + iv_len, ciphertext_len, plaintext_from_server + 1, iv_len, plaintext_from_server + 1 + iv_len + ciphertext_len, clients_session_key, plaintext_from_server + 1, iv_len, message, message_len);
 
 			if (ret < 0 || message_len < 1 + sizeof(uint32_t) || message[message_len - 1] != '\0') {
@@ -1362,6 +1375,17 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			cout << endl << (char*)(message + sizeof(received_counter)) << endl << "> "; 
 			fflush(stdout);
 			free(message);
+		}
+		else {
+			cerr << "Error: wrong message type" << endl;
+			*return_value = 0;
+			free(plaintext_from_server);
+
+			// Notify hard failure to the sending thread
+			shutdown(server_socket, SHUT_RDWR);
+			bridge.set_talking_state(STATUS_TALKING_ERR);
+
+			return; 
 		}
 
 		free(plaintext_from_server);
@@ -3285,10 +3309,15 @@ int Client::receive_plaintext (const int socket, unsigned char*& msg, size_t& ms
 
 		// 5) Check counter against replay attack
 		uint32_t received_counter;
+		if (msg_with_counter_len < sizeof(received_counter) + 1) {
+			cerr << "Error receive_plaintext: message too short" << endl;
+			throw 4;
+		}
 		memcpy(&received_counter, msg_with_counter, sizeof(received_counter));
 		received_counter = ntohl(received_counter);
 
 		if (received_counter != server_counter) {
+			cerr << "Error receive_plaintext: wrong counter" << endl;
 			throw 4;
 		}
 		server_counter++;

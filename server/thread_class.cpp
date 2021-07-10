@@ -520,7 +520,7 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 	unsigned char* msg_with_counter;
 	size_t msg_with_counter_len;
 
-	try {
+	try { // TODO err
 		// 1) Receive iv
 		ret_long = receive_message(socket, (void**)&iv);
 		if (ret_long <= 0) {
@@ -544,12 +544,15 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		// 4) Decrypt message
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, key, 
 		                      iv, iv_len, msg_with_counter, msg_with_counter_len);
-		if (ret < 0 || msg_with_counter_len < sizeof(uint32_t) + 1) {
+		if (ret < 0) {
 			throw 3;
 		}
 
 		// 5) Check counter against replay attack
 		uint32_t received_counter;
+		if (msg_with_counter_len < sizeof(received_counter) + 1) {
+			throw 4;
+		}
 		memcpy(&received_counter, msg_with_counter, sizeof(received_counter));
 		received_counter = ntohl(received_counter);
 
