@@ -423,11 +423,15 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		uint32_t counter = 0;
 		ret = server->get_server_counter(username, counter);
 		if (ret != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "error fetching data of username " << username << endl;
 			throw -1;
 		}
 
 		// Check integer overflow
 		if (msg_len > numeric_limits<size_t>::max() - sizeof(counter)) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "integer overflow" << endl;
 			throw -1;
 		}
 		size_t actual_message_len = sizeof(counter) + msg_len;
@@ -435,6 +439,8 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		// Add counter against replay attack
 		actual_message = (unsigned char*)malloc(actual_message_len);
 		if (!actual_message) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "malloc actual message failed" << endl;
 			throw -1;
 		}
 		counter = htonl(counter);
@@ -444,6 +450,8 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		// 1) Generate IV
 		iv = generate_iv(get_authenticated_encryption_cipher(), iv_len);
 		if (!iv) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "iv generation failed" << endl;
 			throw 0;
 		}
 
@@ -451,23 +459,31 @@ int ServerThread::send_plaintext (const int socket, const unsigned char* msg, co
 		ret = gcm_encrypt(actual_message, actual_message_len, iv, iv_len, key, iv, iv_len, 
 		                  ciphertext, ciphertext_len, tag, tag_len);
 		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "gcm_encrypt failed" << endl;
 			throw 1;
 		}
 
 		// 3) Send iv
 		ret = send_message(socket, iv, iv_len);
 		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "send iv failed" << endl;
 			throw 2;
 		}
 
 		// 4) Send message
 		ret = send_message(socket, ciphertext, ciphertext_len);
 		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "send ciphertext failed" << endl;
 			throw 2;
 		}
 		// 5) Send tag
 		ret = send_message(socket, tag, tag_len);
 		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] send_plaintext: "
+			<< "send tag failed" << endl;
 			throw 2;
 		}
 
@@ -520,10 +536,12 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 	unsigned char* msg_with_counter;
 	size_t msg_with_counter_len;
 
-	try { // TODO err
+	try {
 		// 1) Receive iv
 		ret_long = receive_message(socket, (void**)&iv);
 		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "receive iv failed" << endl;
 			throw 0;
 		}
 		size_t iv_len = ret_long;
@@ -531,6 +549,8 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		// 2) Receive ciphertext
 		ret_long = receive_message(socket, (void**)&ciphertext);
 		if (ret_long <= 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "receive ciphertext failed" << endl;
 			throw 1;
 		}
 		size_t ciphertext_len = ret_long;
@@ -538,6 +558,8 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		// 3) Receive tag
 		ret_long = receive_message(socket, (void**)&tag);
 		if (ret_long < TAG_SIZE) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "receive tag failed" << endl;
 			throw 2;
 		}
 
@@ -545,18 +567,24 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		int ret = gcm_decrypt(ciphertext, ciphertext_len, iv, iv_len, tag, key, 
 		                      iv, iv_len, msg_with_counter, msg_with_counter_len);
 		if (ret < 0) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "gcm_decrypt failed" << endl;
 			throw 3;
 		}
 
 		// 5) Check counter against replay attack
 		uint32_t received_counter;
 		if (msg_with_counter_len < sizeof(received_counter) + 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "integer overflow" << endl;
 			throw 4;
 		}
 		memcpy(&received_counter, msg_with_counter, sizeof(received_counter));
 		received_counter = ntohl(received_counter);
 
 		if (server->check_client_counter(username, received_counter) != 1) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "wrong counter" << endl;
 			throw 4;
 		}
 
@@ -564,6 +592,8 @@ int ServerThread::receive_plaintext (const int socket, unsigned char*& msg, size
 		msg_len = msg_with_counter_len - sizeof(received_counter);
 		msg = (unsigned char*)malloc(msg_len);
 		if (!msg) {
+			cerr << "[Thread " << this_thread::get_id() << "] receive_plaintext: "
+			<< "message malloc failed" << endl;
 			throw 4;
 		}
 		memcpy(msg, msg_with_counter + sizeof(received_counter), msg_len);

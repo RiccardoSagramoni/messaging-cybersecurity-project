@@ -1076,9 +1076,6 @@ int Client::accept_request_to_talk(string peer_username)
 		return -1;
 	}
 
-	// TODO ricevi messaggio dal server con chiave di master
-	// TODO crei una funzione ad hoc
-
 	// 4) Negotiate a symmetric key with the other client, using the DH protocol.
 	// It must assume a passive (slave) role in the protocol execution
 	unsigned char* clients_session_key = nullptr;
