@@ -494,6 +494,9 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		}
 
 		// 3) Send g^a to the other client
+		if (my_dh_key_len == 0) {
+			throw 2;
+		}
 		ret = send_plaintext(server_socket, (unsigned char*)my_dh_key_buf, my_dh_key_len, session_key);
 		if (ret != 1) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
@@ -511,12 +514,18 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 			throw 2;
 		}
 
-		// TODO check size plaintext
+		if (plaintext_from_server_len < sizeof(peer_DH_key_len)) {
+			throw 3;
+		}
 
-		
 		// 4a) Extract length of g^b
 		memcpy(&peer_DH_key_len, plaintext_from_server, sizeof(peer_DH_key_len));
 		peer_DH_key_len = ntohl(peer_DH_key_len);
+
+		if (peer_DH_key_len > numeric_limits<size_t>::max() - sizeof(peer_DH_key_len) - EVP_CIPHER_iv_length(get_authenticated_encryption_cipher()) - TAG_SIZE ||
+		plaintext_from_server_len <  sizeof(peer_DH_key_len) + peer_DH_key_len + EVP_CIPHER_iv_length(get_authenticated_encryption_cipher()) + 1 + TAG_SIZE) {
+			throw 3;
+		}
 		
 		// 4b) Extract serialized g^b
 		peer_DH_key_buf = (unsigned char*)malloc(peer_DH_key_len);
@@ -550,7 +559,7 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 		// 6) Decrypt other client's signature
 		size_t M2_iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
 		size_t M2_ciphertext_len = plaintext_from_server_len - sizeof(peer_DH_key_len) - 
-							peer_DH_key_len - M2_iv_len - TAG_SIZE; // TODO CHECK UNDERFLOW
+							peer_DH_key_len - M2_iv_len - TAG_SIZE;		
 
 		unsigned char* M2_iv = plaintext_from_server + sizeof(peer_DH_key_len) + peer_DH_key_len;
 		unsigned char* M2_ciphertext = M2_iv + M2_iv_len;
@@ -566,12 +575,12 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 
 
 		// 7) Generate <g**b, g**a> and verify it
-
 		if (peer_DH_key_len > numeric_limits<size_t>::max() - 1 ||
 			my_dh_key_len > numeric_limits<size_t>::max() - 1 - peer_DH_key_len)
 		{
 			throw 7;
 		}
+
 		size_t concat_keys_receive_len = my_dh_key_len + peer_DH_key_len + 1;
 		unsigned char* concat_keys_receive = (unsigned char*)malloc(concat_keys_receive_len);
 		if (!concat_keys_receive) {
@@ -645,13 +654,14 @@ int Client::negotiate_key_with_client_as_master (unsigned char*& clients_session
 			throw 10;
 		}
 
+
 		if (M3_tag_len > numeric_limits<size_t>::max() - M3_encrypted_sign_len ||
 			M3_iv_len > numeric_limits<size_t>::max() - M3_encrypted_sign_len - M3_tag_len)
 		{
 			throw 11;
 		}
 		// 9b) Prepare complete packet for server
-		M3_final_ciphertext_len = M3_iv_len + M3_encrypted_sign_len + M3_tag_len; // TODO overflow
+		M3_final_ciphertext_len = M3_iv_len + M3_encrypted_sign_len + M3_tag_len;
 		M3_final_ciphertext = (unsigned char*)malloc(M3_final_ciphertext_len);
 		if (!M3_final_ciphertext) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_master: "
@@ -876,7 +886,10 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 			throw 8;
 		}
 
-		uint32_t temp_my_dh_key_len = my_dh_key_len; // TODO overflow
+		if (my_dh_key_len > numeric_limits<uint32_t>::max()) {
+			throw 9;
+		}
+		uint32_t temp_my_dh_key_len = my_dh_key_len;
 		temp_my_dh_key_len = htonl(temp_my_dh_key_len);
 		memcpy(final_ciphertext, &temp_my_dh_key_len, sizeof(temp_my_dh_key_len));
 
@@ -902,13 +915,16 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 			throw 10;
 		}
 		iv_len = EVP_CIPHER_iv_length(get_authenticated_encryption_cipher());
-		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE; // TODO check overflow e underflow
-
+		if (plaintext_from_server_len < iv_len + 1 + TAG_SIZE) {
+			throw 10;
+		}
+		signature_received_crypt_len = plaintext_from_server_len - iv_len - TAG_SIZE;
+		
 		// 7a) Concat peer_key and my key in order to verify signature
 		if (my_dh_key_len > numeric_limits<size_t>::max() -1 ||
 			peer_key_len > numeric_limits<size_t>::max() - 1 - my_dh_key_len)
 		{
-			throw 5;
+			throw 10;
 		}
     
 		concat_keys_to_ver_len = my_dh_key_len + peer_key_len + 1;
@@ -1310,7 +1326,7 @@ void Client::receive_message_from_client(unsigned char* clients_session_key, int
 			
 			ret = gcm_decrypt(plaintext_from_server + 1 + iv_len, ciphertext_len, plaintext_from_server + 1, iv_len, plaintext_from_server + 1 + iv_len + ciphertext_len, clients_session_key, plaintext_from_server + 1, iv_len, message, message_len);
 
-			if (ret < 0) {
+			if (ret < 0 || message_len < 1 + sizeof(uint32_t) || message[message_len - 1] != '\0') {
 				cerr << "Error: failed decryption peer client's message" << endl;
 				*return_value = 0;
 				free(plaintext_from_server);
@@ -1408,6 +1424,7 @@ int Client::show()
 		<< "wrong received message" << endl;
 		return -1;
 	}
+
 	// Check if the header the the response is correct
 	uint8_t message_type = get_message_type(msg_received_view);
 	if (message_type != SERVER_OK) {
@@ -1418,7 +1435,7 @@ int Client::show()
 	}
 
 	// Check if received message is a null terminated string
-	if (msg_received_view[msg_received_view_len - 1] != '\0') {
+	if (msg_received_view_len < 2 || msg_received_view[msg_received_view_len - 1] != '\0') {
 		cerr << "[Thread " << this_thread::get_id() << "] show: "
 		<< "wrong received message format" << endl;
 		free(msg_received_view);
@@ -1432,10 +1449,12 @@ int Client::show()
 	while (i < msg_received_view_len) {
 		// Extract length of username
 		uint32_t username_len;
+		if (msg_received_view_len - i < 2 + sizeof(username_len)) {
+			return -1;
+		}
 		memcpy(&username_len, msg_received_view + i, sizeof(username_len));
 		username_len = ntohl(username_len);
-
-
+    
 		if (i > numeric_limits<size_t>::max() - sizeof(username_len)) {
 			return -1;
 		}
@@ -1566,8 +1585,11 @@ int Client::negotiate()
 			<< "error get mem bio pub key" << endl;
 			throw 3;
 		}
+		if (ret_long > numeric_limits<uint32_t>::max()) {
+			throw 3;
+		}
 		uint32_t pubkey_size = (uint32_t)ret_long;
-		
+
 		// 4) Send g**a
 		ret = send_message(server_socket, (void*)pubkey_buf, pubkey_size);
 		if (ret < 1) {
