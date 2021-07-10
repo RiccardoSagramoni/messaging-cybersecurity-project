@@ -926,10 +926,10 @@ int Client::negotiate_key_with_client_as_slave (unsigned char*& clients_session_
 		{
 			throw 10;
 		}
-
+    
 		concat_keys_to_ver_len = my_dh_key_len + peer_key_len + 1;
 		concat_keys_to_ver = (unsigned char*)malloc(concat_keys_to_ver_len);
-		
+
 		if (!concat_keys) {
 			cerr << "[Thread " << this_thread::get_id() << "] negotiate_key_with_client_as_slave: "
 			<< "malloc concat_keys failed" << endl;
@@ -1454,8 +1454,7 @@ int Client::show()
 		}
 		memcpy(&username_len, msg_received_view + i, sizeof(username_len));
 		username_len = ntohl(username_len);
-
-		
+    
 		if (i > numeric_limits<size_t>::max() - sizeof(username_len)) {
 			return -1;
 		}
